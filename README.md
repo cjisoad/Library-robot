@@ -9,6 +9,9 @@
 
 当前版本已经按 Raspberry Pi 5 实机运行做过参数和启动策略调整，默认工作流面向差速底盘、2D 激光雷达、IMU 和静态地图导航。
 
+这个仓库本身就是一个 ROS 2 工作空间。
+克隆下来后，仓库根目录就是工作空间根目录，不需要你再额外新建一层工作空间。
+
 ## 系统依赖
 
 基础环境：
@@ -49,7 +52,7 @@ rosdep install --from-paths src --ignore-src -r -y
 ## 工作空间结构
 
 ```text
-mobile_robot_ws/
+Library-robot/
 ├── maps/
 │   ├── my_map.yaml
 │   └── my_map.pgm
@@ -94,13 +97,20 @@ mobile_robot_ws/
 - 雷达：[src/lslidar_driver/params/lsx10.yaml](src/lslidar_driver/params/lsx10.yaml)
 - 导航参数：[src/nav2_minimal_bringup/config/nav2_params.yaml](src/nav2_minimal_bringup/config/nav2_params.yaml)
 
-## 编译
+## 克隆与编译
 
-在工作空间根目录执行：
+先克隆仓库：
 
 ```bash
-cd /home/boreas/mobile_robot_ws
+git clone git@github.com:cjisoad/Library-robot.git
+cd Library-robot
+```
+
+仓库根目录已经是工作空间根目录，直接在这里编译，不需要再额外创建新的工作空间：
+
+```bash
 source /opt/ros/jazzy/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install
 source install/setup.bash
 ```
@@ -110,7 +120,7 @@ source install/setup.bash
 整车导航一键启动：
 
 ```bash
-cd /home/boreas/mobile_robot_ws
+cd Library-robot
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 ros2 launch mobile_robot_nav_bringup full_navigation.launch.py
@@ -133,7 +143,7 @@ ros2 launch mobile_robot_nav_bringup navigation.launch.py use_rviz:=true
 建图：
 
 ```bash
-cd /home/boreas/mobile_robot_ws
+cd Library-robot
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 ros2 launch mobile_robot_nav_bringup slam.launch.py
@@ -142,7 +152,7 @@ ros2 launch mobile_robot_nav_bringup slam.launch.py
 保存地图：
 
 ```bash
-cd /home/boreas/mobile_robot_ws
+cd Library-robot
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 ros2 launch mobile_robot_nav_bringup save_map.launch.py map_name:=my_map
@@ -187,7 +197,8 @@ ros2 launch mobile_robot_nav_bringup save_map.launch.py map_name:=my_map
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-source /home/boreas/mobile_robot_ws/install/setup.bash
+cd Library-robot
+source install/setup.bash
 ros2 pkg prefix mobile_robot_nav_bringup
 ros2 pkg prefix imu_car_ros2
 ros2 pkg prefix lslidar_driver
