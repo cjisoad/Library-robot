@@ -56,6 +56,11 @@ rosdep install --from-paths src --ignore-src -r -y
 
 ```text
 Library-robot/
+├── archive/
+│   └── Turntable_ctrl/
+│       ├── COLCON_IGNORE
+│       ├── README.md
+│       └── src/
 ├── maps/
 │   ├── my_map.yaml
 │   └── my_map.pgm
@@ -97,6 +102,8 @@ Library-robot/
   负责语音模块串口接入、命令词识别结果发布，以及“听到什么发什么信号 / 收到什么信号播什么话”的桥接接口。
 - `mobile_robot_cartographer_bringup`
   负责 Cartographer 实车建图启动、占据栅格发布以及地图保存入口。
+- `archive/Turntable_ctrl`
+  仅保存原始转台控制相关源码，供后续参考，不参与 ROS 工作空间构建。
 
 ## 默认硬件接口
 
@@ -132,6 +139,8 @@ rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install
 source install/setup.bash
 ```
+
+说明：`archive/` 下的归档源码不在 `src/` 中，且带有 `COLCON_IGNORE`，不会参与 `colcon build`，也不会向当前工作空间导出 ROS 包环境。
 
 ## 基本启动
 

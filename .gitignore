@@ -10,3 +10,10 @@ log/
 
 **/__pycache__/
 .vscode/
+
+# Archived non-ROS sources
+archive/Turntable_ctrl/.venv/
+archive/Turntable_ctrl/**/.venv/
+archive/Turntable_ctrl/**/.pio/
+archive/Turntable_ctrl/**/.vscode/
+archive/Turntable_ctrl/**/*.log
