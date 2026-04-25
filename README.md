@@ -6,6 +6,7 @@
 - 雷神激光消息定义 `lslidar_msgs`
 - 底盘控制、IMU 驱动与里程计 `imu_car_ros2`
 - Nav2 导航与建图启动整合包 `mobile_robot_nav_bringup`
+- 语音模块命令读取与交互桥接 `mobile_robot_voice_interaction`
 
 当前版本已经按 Raspberry Pi 5 实机运行做过参数和启动策略调整，默认工作流面向差速底盘、2D 激光雷达、IMU 和静态地图导航。
 
@@ -64,6 +65,10 @@ Library-robot/
     │   ├── params/lsx10.yaml
     │   └── rviz/lslidar.rviz
     ├── lslidar_msgs/
+    ├── mobile_robot_voice_interaction/
+    │   ├── config/speech_interaction_example.yaml
+    │   ├── launch/speech_interaction.launch.py
+    │   └── mobile_robot_voice_interaction/
     └── nav2_minimal_bringup/
         ├── config/nav2_params.yaml
         ├── launch/full_navigation.launch.py
@@ -82,6 +87,8 @@ Library-robot/
   提供雷达驱动依赖的消息定义。
 - `mobile_robot_nav_bringup`
   负责导航、定位、建图、保存地图以及整车一键启动入口。
+- `mobile_robot_voice_interaction`
+  负责语音模块串口接入、命令词识别结果发布，以及“听到什么发什么信号 / 收到什么信号播什么话”的桥接接口。
 
 ## 默认硬件接口
 
@@ -90,12 +97,14 @@ Library-robot/
 - 底盘串口：`/dev/ttyACM1`
 - IMU 串口：`/dev/ttyUSB0`
 - 雷达串口：`/dev/ttyACM0`
+- 语音模块：推荐绑定为 `/dev/myspeech`，未绑定时启动语音节点显式传 `port:=/dev/ttyUSBx`
 
 对应配置文件：
 
 - 底盘/IMU/里程计：[src/imu_car_ros2/config/car_params.yaml](src/imu_car_ros2/config/car_params.yaml)
 - 雷达：[src/lslidar_driver/params/lsx10.yaml](src/lslidar_driver/params/lsx10.yaml)
 - 导航参数：[src/nav2_minimal_bringup/config/nav2_params.yaml](src/nav2_minimal_bringup/config/nav2_params.yaml)
+- 语音交互：[src/mobile_robot_voice_interaction/config/speech_interaction_example.yaml](src/mobile_robot_voice_interaction/config/speech_interaction_example.yaml)
 
 ## 克隆与编译
 
@@ -137,6 +146,42 @@ ros2 launch mobile_robot_nav_bringup full_navigation.launch.py use_nav_rviz:=tru
 ```bash
 ros2 launch mobile_robot_nav_bringup navigation.launch.py use_rviz:=true
 ```
+
+## 语音模块交互
+
+先单独检查语音模块能否读出命令码：
+
+```bash
+cd Library-robot
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 run mobile_robot_voice_interaction voice_cmd_reader --ros-args -p port:=/dev/ttyUSB1
+```
+
+如果要做“听到什么话发什么信号 / 收到什么信号说什么话”，直接启动语音交互桥：
+
+```bash
+cd Library-robot
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 launch mobile_robot_voice_interaction speech_interaction.launch.py port:=/dev/ttyUSB1
+```
+
+这个包默认发布：
+
+- `/speech_cmd`
+- `/speech_cmd_name`
+- `/speech_heard_signal`
+
+并订阅：
+
+- `/speech_say_cmd`
+- `/speech_say_name`
+- `/speech_say_signal`
+
+详细接口、参数和示例规则见：
+
+- [src/mobile_robot_voice_interaction/README.md](src/mobile_robot_voice_interaction/README.md)
 
 ## 建图与保存地图
 
@@ -183,6 +228,8 @@ ros2 launch mobile_robot_nav_bringup save_map.launch.py map_name:=my_map
   建图入口。
 - [src/nav2_minimal_bringup/launch/save_map.launch.py](src/nav2_minimal_bringup/launch/save_map.launch.py)
   保存地图入口。
+- [src/mobile_robot_voice_interaction/launch/speech_interaction.launch.py](src/mobile_robot_voice_interaction/launch/speech_interaction.launch.py)
+  语音模块交互桥启动入口。
 
 ## 常见配置入口
 
@@ -190,6 +237,7 @@ ros2 launch mobile_robot_nav_bringup save_map.launch.py map_name:=my_map
 - Nav2 参数：`src/nav2_minimal_bringup/config/nav2_params.yaml`
 - 底盘与 IMU：`src/imu_car_ros2/config/car_params.yaml`
 - 雷达参数：`src/lslidar_driver/params/lsx10.yaml`
+- 语音规则：`src/mobile_robot_voice_interaction/config/speech_interaction_example.yaml`
 
 ## 验证命令
 
@@ -202,6 +250,7 @@ source install/setup.bash
 ros2 pkg prefix mobile_robot_nav_bringup
 ros2 pkg prefix imu_car_ros2
 ros2 pkg prefix lslidar_driver
+ros2 pkg prefix mobile_robot_voice_interaction
 ```
 
 检查关键话题：
