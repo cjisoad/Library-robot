@@ -7,6 +7,7 @@
 - 底盘控制、IMU 驱动与里程计 `imu_car_ros2`
 - Nav2 导航与建图启动整合包 `mobile_robot_nav_bringup`
 - 语音模块命令读取与交互桥接 `mobile_robot_voice_interaction`
+- Cartographer 实车建图启动整合包 `mobile_robot_cartographer_bringup`
 
 当前版本已经按 Raspberry Pi 5 实机运行做过参数和启动策略调整，默认工作流面向差速底盘、2D 激光雷达、IMU 和静态地图导航。
 
@@ -33,6 +34,7 @@ sudo apt install -y \
   python3-serial \
   libpcap-dev \
   libpcl-dev \
+  ros-jazzy-cartographer-ros \
   ros-jazzy-navigation2 \
   ros-jazzy-nav2-bringup \
   ros-jazzy-slam-toolbox \
@@ -65,6 +67,10 @@ Library-robot/
     │   ├── params/lsx10.yaml
     │   └── rviz/lslidar.rviz
     ├── lslidar_msgs/
+    ├── mobile_robot_cartographer_bringup/
+    │   ├── config/mobile_robot_2d.lua
+    │   ├── launch/cartographer_mapping.launch.py
+    │   └── launch/save_map.launch.py
     ├── mobile_robot_voice_interaction/
     │   ├── config/speech_interaction_example.yaml
     │   ├── launch/speech_interaction.launch.py
@@ -89,6 +95,8 @@ Library-robot/
   负责导航、定位、建图、保存地图以及整车一键启动入口。
 - `mobile_robot_voice_interaction`
   负责语音模块串口接入、命令词识别结果发布，以及“听到什么发什么信号 / 收到什么信号播什么话”的桥接接口。
+- `mobile_robot_cartographer_bringup`
+  负责 Cartographer 实车建图启动、占据栅格发布以及地图保存入口。
 
 ## 默认硬件接口
 
@@ -105,6 +113,7 @@ Library-robot/
 - 雷达：[src/lslidar_driver/params/lsx10.yaml](src/lslidar_driver/params/lsx10.yaml)
 - 导航参数：[src/nav2_minimal_bringup/config/nav2_params.yaml](src/nav2_minimal_bringup/config/nav2_params.yaml)
 - 语音交互：[src/mobile_robot_voice_interaction/config/speech_interaction_example.yaml](src/mobile_robot_voice_interaction/config/speech_interaction_example.yaml)
+- Cartographer：[src/mobile_robot_cartographer_bringup/config/mobile_robot_2d.lua](src/mobile_robot_cartographer_bringup/config/mobile_robot_2d.lua)
 
 ## 克隆与编译
 
@@ -183,6 +192,48 @@ ros2 launch mobile_robot_voice_interaction speech_interaction.launch.py port:=/d
 
 - [src/mobile_robot_voice_interaction/README.md](src/mobile_robot_voice_interaction/README.md)
 
+## Cartographer 建图
+
+如果你想用 Cartographer，而不是 `slam_toolbox`，可以使用新增的 Cartographer 功能包：
+
+```bash
+cd Library-robot
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 launch mobile_robot_cartographer_bringup cartographer_mapping.launch.py
+```
+
+这套默认对齐当前实车的：
+
+- `/scan`
+- `/odom`
+- `base_link`
+- `laser_link`
+
+并复用当前工作空间已有的底盘、IMU、里程计与雷达参数。
+
+如果只想在驱动已经运行时单独起 Cartographer：
+
+```bash
+ros2 launch mobile_robot_cartographer_bringup cartographer_mapping.launch.py \
+  start_robot_drivers:=false
+```
+
+如果要保存 Cartographer 当前生成的 `/map`：
+
+```bash
+ros2 launch mobile_robot_cartographer_bringup save_map.launch.py map_name:=cartographer_map
+```
+
+默认会保存到工作空间根目录：
+
+- `maps/cartographer_map.yaml`
+- `maps/cartographer_map.pgm`
+
+详细说明见：
+
+- [src/mobile_robot_cartographer_bringup/README.md](src/mobile_robot_cartographer_bringup/README.md)
+
 ## 建图与保存地图
 
 建图：
@@ -230,6 +281,10 @@ ros2 launch mobile_robot_nav_bringup save_map.launch.py map_name:=my_map
   保存地图入口。
 - [src/mobile_robot_voice_interaction/launch/speech_interaction.launch.py](src/mobile_robot_voice_interaction/launch/speech_interaction.launch.py)
   语音模块交互桥启动入口。
+- [src/mobile_robot_cartographer_bringup/launch/cartographer_mapping.launch.py](src/mobile_robot_cartographer_bringup/launch/cartographer_mapping.launch.py)
+  Cartographer 实车建图入口。
+- [src/mobile_robot_cartographer_bringup/launch/save_map.launch.py](src/mobile_robot_cartographer_bringup/launch/save_map.launch.py)
+  保存 Cartographer 地图入口。
 
 ## 常见配置入口
 
@@ -238,6 +293,7 @@ ros2 launch mobile_robot_nav_bringup save_map.launch.py map_name:=my_map
 - 底盘与 IMU：`src/imu_car_ros2/config/car_params.yaml`
 - 雷达参数：`src/lslidar_driver/params/lsx10.yaml`
 - 语音规则：`src/mobile_robot_voice_interaction/config/speech_interaction_example.yaml`
+- Cartographer 参数：`src/mobile_robot_cartographer_bringup/config/mobile_robot_2d.lua`
 
 ## 验证命令
 
@@ -251,6 +307,7 @@ ros2 pkg prefix mobile_robot_nav_bringup
 ros2 pkg prefix imu_car_ros2
 ros2 pkg prefix lslidar_driver
 ros2 pkg prefix mobile_robot_voice_interaction
+ros2 pkg prefix mobile_robot_cartographer_bringup
 ```
 
 检查关键话题：
