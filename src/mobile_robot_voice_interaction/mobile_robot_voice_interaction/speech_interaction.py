@@ -38,7 +38,7 @@ class SpeechInteraction(Node):
             self.get_parameter("speak_signal_rules").value
         )
 
-        self.speech = Speech(com=port or "/dev/myspeech", baudrate=baudrate)
+        self.speech = Speech(com=port or "/dev/speech_port", baudrate=baudrate)
 
         self.cmd_pub = self.create_publisher(Int32, "speech_cmd", 10)
         self.name_pub = self.create_publisher(String, "speech_cmd_name", 10)
@@ -55,7 +55,7 @@ class SpeechInteraction(Node):
 
         self.get_logger().info(
             "Speech interaction bridge started. "
-            f"Preferred port: {port or '/dev/myspeech'}; "
+            f"Preferred port: {port or '/dev/speech_port'}; "
             "listens on /speech_say_cmd, /speech_say_name, /speech_say_signal; "
             "publishes /speech_cmd, /speech_cmd_name, /speech_heard_signal."
         )

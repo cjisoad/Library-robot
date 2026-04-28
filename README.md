@@ -103,16 +103,17 @@ Library-robot/
 - `mobile_robot_cartographer_bringup`
   负责 Cartographer 实车建图启动、占据栅格发布以及地图保存入口。
 - `archive/Turntable_ctrl`
-  仅保存原始转台控制相关源码，供后续参考，不参与 ROS 工作空间构建。
+  仅保存原始升降台控制相关源码，目录名沿用历史命名，供后续参考，不参与 ROS 工作空间构建。
 
 ## 默认硬件接口
 
 当前默认串口和接口配置如下，如设备编号不同请先改配置文件：
 
-- 底盘串口：`/dev/ttyACM1`
-- IMU 串口：`/dev/ttyUSB0`
-- 雷达串口：`/dev/ttyACM0`
-- 语音模块：推荐绑定为 `/dev/myspeech`，未绑定时启动语音节点显式传 `port:=/dev/ttyUSBx`
+- 底盘串口：`/dev/chassis_serial_port`
+- IMU 串口：`/dev/imu_port`
+- 雷达串口：`/dev/laser_port`
+- 语音模块：`/dev/speech_port`
+- 升降台串口：`/dev/lift_port`
 
 对应配置文件：
 
@@ -173,7 +174,7 @@ ros2 launch mobile_robot_nav_bringup navigation.launch.py use_rviz:=true
 cd Library-robot
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
-ros2 run mobile_robot_voice_interaction voice_cmd_reader --ros-args -p port:=/dev/ttyUSB1
+ros2 run mobile_robot_voice_interaction voice_cmd_reader --ros-args -p port:=/dev/speech_port
 ```
 
 如果要做“听到什么话发什么信号 / 收到什么信号说什么话”，直接启动语音交互桥：
@@ -182,7 +183,7 @@ ros2 run mobile_robot_voice_interaction voice_cmd_reader --ros-args -p port:=/de
 cd Library-robot
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
-ros2 launch mobile_robot_voice_interaction speech_interaction.launch.py port:=/dev/ttyUSB1
+ros2 launch mobile_robot_voice_interaction speech_interaction.launch.py port:=/dev/speech_port
 ```
 
 这个包默认发布：

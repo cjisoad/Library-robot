@@ -1,6 +1,6 @@
 speech_interaction:
   ros__parameters:
-    port: /dev/ttyUSB1
+    port: /dev/speech_port
     baudrate: 115200
     poll_hz: 20.0
     dedupe_window_sec: 0.7

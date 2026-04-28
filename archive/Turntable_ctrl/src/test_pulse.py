@@ -14,7 +14,7 @@ else:
     import tty
 
 
-DEFAULT_PORT = "COM9" if os.name == "nt" else "/dev/ttyUSB1"
+DEFAULT_PORT = "COM9" if os.name == "nt" else "/dev/lift_port"
 
 
 class ConsoleKeyReader:
@@ -56,7 +56,7 @@ class YZAIM_Motor:
         """
         初始化电机通信
         根据手册P9，默认通信参数为: 19200, 8, N, 1
-        :param port: 串口号，Linux 默认 /dev/ttyUSB1，Windows 默认 COM9
+        :param port: 串口号，Linux 默认 /dev/lift_port，Windows 默认 COM9
         :param baudrate: 波特率，默认为19200
         :param slave_id: 设备地址，默认为1
         """

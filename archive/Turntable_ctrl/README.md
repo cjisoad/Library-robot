@@ -1,6 +1,6 @@
-# Turntable_ctrl Archive
+# Lift Platform Control Archive
 
-这个目录用于归档 `/home/boreas/Turntable_ctrl` 中现有的零散功能源码，仅作为保存和参考，不参与当前 `mobile_robot_ws` 的 ROS 2 构建、安装或运行环境。
+这个目录用于归档历史 `Turntable_ctrl` 目录中的升降台控制源码，仅作为保存和参考，不参与当前 `mobile_robot_ws` 的 ROS 2 构建、安装或运行环境。目录名沿用历史命名，但当前固定串口语义是升降台，不是转盘。
 
 设计约束：
 

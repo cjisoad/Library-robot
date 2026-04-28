@@ -25,7 +25,12 @@ class KeyboardCmdVelTest(Node):
         self.angular_max = 1.0
         self.linear_x = 0.0
         self.angular_z = 0.0
-        self.tty = open('/dev/tty', 'rb', buffering=0)
+        if sys.stdin.isatty():
+            self.tty = sys.stdin.buffer
+            self.should_close_tty = False
+        else:
+            self.tty = open('/dev/tty', 'rb', buffering=0)
+            self.should_close_tty = True
         self.stdin_fd = self.tty.fileno()
         self.settings = termios.tcgetattr(self.stdin_fd)
         self.terminal_restored = False
@@ -88,7 +93,8 @@ class KeyboardCmdVelTest(Node):
         stop_msg = Twist()
         self.publisher_.publish(stop_msg)
         self._restore_terminal()
-        self.tty.close()
+        if self.should_close_tty:
+            self.tty.close()
         return super().destroy_node()
 
 

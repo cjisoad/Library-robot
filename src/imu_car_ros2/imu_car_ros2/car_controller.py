@@ -28,7 +28,7 @@ import serial
 import serial.tools.list_ports
 
 
-SERIAL_PORT = "/dev/ttyACM0"
+SERIAL_PORT = "/dev/chassis_serial_port"
 BAUD_RATE = 115200
 
 WHEEL_IDS = {
@@ -61,6 +61,9 @@ class CarController(Node):
         self.declare_parameter("command_scale", 50.0)
         self.declare_parameter("max_command", MAX_COMMAND)
         self.declare_parameter("acceleration_time", 3)
+        self.declare_parameter("prefer_pivot_turn", True)
+        self.declare_parameter("pivot_turn_angular_threshold", 0.01)
+        self.declare_parameter("min_pivot_wheel_speed", 0.08)
         self.declare_parameter("cmd_vel_topic", "/cmd_vel")
         self.declare_parameter("wheel_speed_topic", "/wheel_speeds")
         self.declare_parameter("joint_state_topic", "/wheel_joint_states")
@@ -73,6 +76,11 @@ class CarController(Node):
         self.command_scale = float(self.get_parameter("command_scale").value)
         self.max_command = int(self.get_parameter("max_command").value)
         self.acceleration_time = int(self.get_parameter("acceleration_time").value)
+        self.prefer_pivot_turn = bool(self.get_parameter("prefer_pivot_turn").value)
+        self.pivot_turn_angular_threshold = float(
+            self.get_parameter("pivot_turn_angular_threshold").value
+        )
+        self.min_pivot_wheel_speed = float(self.get_parameter("min_pivot_wheel_speed").value)
         self.feedback_timeout = float(self.get_parameter("feedback_timeout").value)
 
         wheel_speed_topic = self.get_parameter("wheel_speed_topic").value
@@ -134,8 +142,14 @@ class CarController(Node):
 
     def compute_wheel_linear_speeds(self, linear_x: float, angular_z: float) -> Dict[str, float]:
         half_track = self.track_width / 2.0
-        left_speed = linear_x - angular_z * half_track
-        right_speed = linear_x + angular_z * half_track
+        if self.prefer_pivot_turn and abs(angular_z) > self.pivot_turn_angular_threshold:
+            turn_direction = 1.0 if angular_z > 0.0 else -1.0
+            turn_speed = max(abs(angular_z) * half_track, self.min_pivot_wheel_speed)
+            left_speed = -turn_direction * turn_speed
+            right_speed = turn_direction * turn_speed
+        else:
+            left_speed = linear_x - angular_z * half_track
+            right_speed = linear_x + angular_z * half_track
 
         wheel_linear = {
             "left_front_wheel": left_speed,

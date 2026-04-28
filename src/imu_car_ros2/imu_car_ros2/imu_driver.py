@@ -22,7 +22,7 @@ from sensor_msgs.msg import Imu
 import serial
 
 
-SERIAL_PORT = "/dev/ttyUSB0"
+SERIAL_PORT = "/dev/imu_port"
 BAUD_RATE = 9600
 
 

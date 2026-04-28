@@ -67,6 +67,7 @@ class CarOdometry(Node):
         self.declare_parameter("track_width", 0.30)
         self.declare_parameter("wheel_radius", 0.05)
         self.declare_parameter("linear_scale", 1.0)
+        self.declare_parameter("angular_scale", 1.0)
         self.declare_parameter("publish_rate", 50.0)
         self.declare_parameter("enable_angle_debug", False)
         self.declare_parameter("debug_log_period", 0.5)
@@ -92,6 +93,7 @@ class CarOdometry(Node):
         self.track_width = float(self.get_parameter("track_width").value)
         self.wheel_radius = float(self.get_parameter("wheel_radius").value)
         self.linear_scale = float(self.get_parameter("linear_scale").value)
+        self.angular_scale = float(self.get_parameter("angular_scale").value)
         publish_rate = float(self.get_parameter("publish_rate").value)
         self.enable_angle_debug = bool(self.get_parameter("enable_angle_debug").value)
         self.debug_log_period = float(self.get_parameter("debug_log_period").value)
@@ -141,6 +143,8 @@ class CarOdometry(Node):
         self.accumulated_yaw = 0.0
         self.gyro_integrated_yaw = 0.0
         self.previous_imu_yaw: Optional[float] = None
+        self.previous_imu_stamp_sec: Optional[float] = None
+        self.imu_orientation_angular_z = 0.0
 
         period = 1.0 / publish_rate if publish_rate > 0.0 else 0.02
         self.timer = self.create_timer(period, self.update_odometry)
@@ -167,13 +171,16 @@ class CarOdometry(Node):
     def imu_callback(self, msg: Imu) -> None:
         self.latest_imu = msg
 
+    def _stamp_to_sec(self, msg: Imu) -> float:
+        return float(msg.header.stamp.sec) + float(msg.header.stamp.nanosec) / 1e9
+
     def extract_base_linear_and_angular(self, wheel_speed: Sequence[float]) -> Tuple[float, float]:
         left_speed = (wheel_speed[0] + wheel_speed[2]) / 2.0
         right_speed = (wheel_speed[1] + wheel_speed[3]) / 2.0
         linear_x = (left_speed + right_speed) / 2.0 * self.linear_scale
         angular_from_wheels = 0.0
         if self.track_width > 0.0:
-            angular_from_wheels = (right_speed - left_speed) / self.track_width
+            angular_from_wheels = (right_speed - left_speed) / self.track_width * self.angular_scale
         return linear_x, angular_from_wheels
 
     def update_odometry(self) -> None:
@@ -193,20 +200,27 @@ class CarOdometry(Node):
             angular_z = angular_from_wheels
 
         if self.latest_imu is not None:
-            if self.use_imu_angular_velocity:
-                angular_z = float(self.latest_imu.angular_velocity.z)
             if self.use_imu_orientation:
                 yaw = quaternion_to_yaw(self.latest_imu.orientation)
+                imu_stamp_sec = self._stamp_to_sec(self.latest_imu)
                 self.latest_imu_yaw_wrapped_deg = math.degrees(yaw)
                 if self.previous_imu_yaw is None:
                     self.previous_imu_yaw = yaw
-                    self.theta = yaw
-                else:
+                    self.previous_imu_stamp_sec = imu_stamp_sec
+                    self.theta = self.accumulated_yaw
+                elif imu_stamp_sec != self.previous_imu_stamp_sec:
+                    imu_dt = imu_stamp_sec - self.previous_imu_stamp_sec
                     delta_theta = normalize_angle(yaw - self.previous_imu_yaw)
                     self.previous_imu_yaw = yaw
-                    self.theta = yaw
+                    self.previous_imu_stamp_sec = imu_stamp_sec
                     self.accumulated_yaw += delta_theta
+                    self.theta = self.accumulated_yaw
+                    if imu_dt > 0.0:
+                        self.imu_orientation_angular_z = delta_theta / imu_dt
                 self.latest_imu_yaw_deg = math.degrees(self.accumulated_yaw)
+                angular_z = self.imu_orientation_angular_z
+            elif self.use_imu_angular_velocity:
+                angular_z = float(self.latest_imu.angular_velocity.z)
 
         gyro_delta_theta = angular_z * dt
         self.gyro_integrated_yaw += gyro_delta_theta
@@ -291,10 +305,7 @@ class CarOdometry(Node):
         odom_msg.pose.pose.position.y = self.y
         odom_msg.pose.pose.position.z = 0.0
 
-        if self.latest_imu is not None and self.use_imu_orientation:
-            odom_msg.pose.pose.orientation = self.latest_imu.orientation
-        else:
-            odom_msg.pose.pose.orientation = yaw_to_quaternion(self.theta)
+        odom_msg.pose.pose.orientation = yaw_to_quaternion(self.theta)
 
         odom_msg.twist.twist.linear.x = self.linear_x
         odom_msg.twist.twist.linear.y = 0.0

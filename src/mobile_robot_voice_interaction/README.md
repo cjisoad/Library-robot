@@ -32,7 +32,7 @@
 - 已安装 ROS 2 Jazzy
 - 已安装 `python3-serial`
 - 语音模块已经通过 USB 串口接到主机
-- 推荐通过 udev 绑定稳定设备名 `/dev/myspeech`
+- 推荐通过 udev 绑定稳定设备名 `/dev/speech_port`
 - 如果还没有绑定稳定设备名，启动时显式传 `port:=/dev/ttyUSBx`
 
 ## 编译
@@ -61,16 +61,16 @@ source install/setup.bash
 只看语音模块识别结果：
 
 ```bash
-ros2 run mobile_robot_voice_interaction voice_cmd_reader --ros-args -p port:=/dev/ttyUSB1
+ros2 run mobile_robot_voice_interaction voice_cmd_reader --ros-args -p port:=/dev/speech_port
 ```
 
 启动语音交互桥：
 
 ```bash
-ros2 launch mobile_robot_voice_interaction speech_interaction.launch.py port:=/dev/ttyUSB1
+ros2 launch mobile_robot_voice_interaction speech_interaction.launch.py port:=/dev/speech_port
 ```
 
-如果系统已经有 `/dev/myspeech`，也可以不传 `port`：
+如果系统已经有 `/dev/speech_port`，也可以不传 `port`：
 
 ```bash
 ros2 launch mobile_robot_voice_interaction speech_interaction.launch.py
@@ -135,7 +135,7 @@ ros2 launch mobile_robot_voice_interaction speech_interaction.launch.py
 主要参数：
 
 - `port`
-  串口设备名，默认优先尝试 `/dev/myspeech`
+  串口设备名，默认优先尝试 `/dev/speech_port`
 - `baudrate`
   串口波特率，默认 `115200`
 - `poll_hz`
@@ -176,14 +176,14 @@ ros2 topic pub -1 /speech_say_signal std_msgs/msg/String "{data: 'nav_ready'}"
 
 ```bash
 ros2 run mobile_robot_voice_interaction speech_interaction --ros-args \
-  -p port:=/dev/ttyUSB1 \
+  -p port:=/dev/speech_port \
   -p heard_signal_rules:="[19=nav_goal_1,20=nav_goal_2]" \
   -p speak_signal_rules:="[nav_ready=goal_one,nav_arrived=goal_origin]"
 ```
 
 ## 使用流程
 
-1. 先确认语音模块串口设备名，推荐绑定成 `/dev/myspeech`。
+1. 先确认语音模块串口设备名，推荐绑定成 `/dev/speech_port`。
 2. 启动 `voice_cmd_reader`，先看命令码是否能稳定读出来。
 3. 再启动 `speech_interaction`，把命令码映射到自己的业务信号。
 4. 业务节点订阅 `/speech_heard_signal`，做导航、灯光或状态机控制。

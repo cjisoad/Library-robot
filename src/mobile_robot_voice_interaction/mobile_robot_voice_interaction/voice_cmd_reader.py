@@ -24,7 +24,7 @@ class VoiceCommandReader(Node):
         poll_hz = float(self.get_parameter("poll_hz").value)
         poll_hz = poll_hz if poll_hz > 0.0 else 20.0
 
-        self.speech = Speech(com=port or "/dev/myspeech", baudrate=baudrate)
+        self.speech = Speech(com=port or "/dev/speech_port", baudrate=baudrate)
         self.cmd_pub = self.create_publisher(Int32, "speech_cmd", 10)
         self.name_pub = self.create_publisher(String, "speech_cmd_name", 10)
 
@@ -33,8 +33,8 @@ class VoiceCommandReader(Node):
 
         self.get_logger().info(
             "Voice reader started. "
-            f"Preferred port: {port or '/dev/myspeech'}; "
-            "override with --ros-args -p port:=/dev/ttyUSBx or YAHBOOM_SPEECH_PORT."
+            f"Preferred port: {port or '/dev/speech_port'}; "
+            "override with --ros-args -p port:=/dev/speech_port or YAHBOOM_SPEECH_PORT."
         )
         self.timer = self.create_timer(1.0 / poll_hz, self.poll_voice_command)
 

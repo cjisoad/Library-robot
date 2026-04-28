@@ -21,7 +21,7 @@ class Speech:
         (0x1A86, 0x7523),
     }
 
-    def __init__(self, com="/dev/myspeech", baudrate=DEFAULT_BAUDRATE, timeout=0.05):
+    def __init__(self, com="/dev/speech_port", baudrate=DEFAULT_BAUDRATE, timeout=0.05):
         env_port = os.environ.get("YAHBOOM_SPEECH_PORT")
         env_baudrate = os.environ.get("YAHBOOM_SPEECH_BAUDRATE")
 
@@ -123,11 +123,11 @@ class Speech:
         if len(candidates) == 1:
             return candidates[0]
 
-        requested = self.requested_port or "/dev/myspeech"
+        requested = self.requested_port or "/dev/speech_port"
         if not candidates:
             self.last_error = (
                 f"Speech module not found at {requested}. "
-                "Set YAHBOOM_SPEECH_PORT or create /dev/myspeech."
+                "Set YAHBOOM_SPEECH_PORT or create /dev/speech_port."
             )
             return None
 
@@ -148,7 +148,7 @@ class Speech:
                 candidates.append(path)
 
         add(self.requested_port)
-        add("/dev/myspeech")
+        add("/dev/speech_port")
 
         for path in sorted(glob.glob("/dev/serial/by-id/*")):
             add(path)
