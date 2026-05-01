@@ -5,6 +5,7 @@ import queue
 import threading
 import time
 import tkinter as tk
+from pathlib import Path
 from dataclasses import dataclass
 from tkinter import messagebox, scrolledtext, ttk
 from typing import Any
@@ -38,21 +39,44 @@ def require_pyserial() -> None:
         raise RuntimeError("pyserial is not installed. Run: pip install pyserial")
 
 
-def detect_default_port(preferred: str = "COM13") -> str:
+def normalize_serial_port(port: str) -> str:
+    stripped = port.strip()
+    if not stripped:
+        return stripped
+    if "://" in stripped or stripped.upper().startswith("COM") or stripped.startswith("/"):
+        return stripped
+    if stripped.startswith(("ttyACM", "ttyUSB", "ttyS")):
+        return f"/dev/{stripped}"
+    return stripped
+
+
+def preferred_default_port() -> str:
+    if Path("/dev/ttyACM2").exists():
+        return "/dev/ttyACM2"
+    if Path("/dev").exists():
+        return "/dev/ttyACM0"
+    return "COM13"
+
+
+def detect_default_port(preferred: str | None = None) -> str:
+    preferred = preferred or preferred_default_port()
     if list_ports is None:
         return preferred
     ports = {port.device.upper(): port.device for port in list_ports.comports()}
+    normalized_preferred = normalize_serial_port(preferred)
+    if normalized_preferred.upper() in ports:
+        return ports[normalized_preferred.upper()]
     if preferred.upper() in ports:
         return ports[preferred.upper()]
     if ports:
         return ports[sorted(ports)[0]]
-    return preferred
+    return normalized_preferred
 
 
 def list_available_ports() -> list[str]:
     if list_ports is None:
         return []
-    return [port.device for port in list_ports.comports()]
+    return sorted(port.device for port in list_ports.comports())
 
 
 def format_bridge_command(command: SerialCommand) -> str:
@@ -66,19 +90,20 @@ def format_bridge_command(command: SerialCommand) -> str:
 
 def open_serial_port(config: SerialBridgeConfig) -> Any:
     require_pyserial()
+    port = normalize_serial_port(config.port)
     kwargs = {
         "baudrate": config.baudrate,
         "timeout": config.timeout,
-        "write_timeout": 1.0,
+        "write_timeout": 0,
     }
-    if "://" in config.port:
-        conn = serial.serial_for_url(config.port, **kwargs)
+    if "://" in port:
+        conn = serial.serial_for_url(port, **kwargs)
     else:
-        conn = serial.Serial(config.port, **kwargs)
+        conn = serial.Serial(port, **kwargs)
 
-    for attr in ("dtr", "rts"):
+    for attr, value in (("dtr", True), ("rts", False)):
         try:
-            setattr(conn, attr, False)
+            setattr(conn, attr, value)
         except Exception:
             pass
 
@@ -195,10 +220,10 @@ class SerialBridgeWorker(threading.Thread):
         self.rx_count = 0
         self.last_tx_time = 0.0
         self.last_rx_time = 0.0
-        self.emit("connected", port=config.port, baudrate=config.baudrate)
+        self.emit("connected", port=normalize_serial_port(config.port), baudrate=config.baudrate)
         self.log(
             "Connected serial bridge: port={0} baudrate={1} timeout={2:.3f}s".format(
-                config.port,
+                normalize_serial_port(config.port),
                 config.baudrate,
                 config.timeout,
             )
@@ -208,6 +233,13 @@ class SerialBridgeWorker(threading.Thread):
         self.connected = False
         self.continuous_send = False
         if self.connection is not None:
+            for method_name in ("cancel_write", "reset_output_buffer"):
+                method = getattr(self.connection, method_name, None)
+                if callable(method):
+                    try:
+                        method()
+                    except Exception:
+                        pass
             try:
                 self.connection.close()
             except Exception:
@@ -221,10 +253,15 @@ class SerialBridgeWorker(threading.Thread):
         if not self.connected or self.connection is None:
             raise RuntimeError("Serial bridge is not connected.")
         line = format_bridge_command(command)
-        self.connection.write(line.encode("ascii"))
-        flush = getattr(self.connection, "flush", None)
-        if callable(flush):
-            flush()
+        port = normalize_serial_port(str(getattr(self.connection, "port", "unknown")))
+        try:
+            written = self.connection.write(line.encode("ascii"))
+            if written != len(line):
+                raise RuntimeError(f"incomplete serial write: {written}/{len(line)} bytes")
+        except Exception as exc:
+            self.continuous_send = False
+            self._disconnect_internal(notify=True)
+            raise RuntimeError(f"Serial write failed on {port}: {exc}") from exc
         self.tx_count += 1
         self.last_tx_time = time.time()
         self.emit("tx", line=line.rstrip("\n"), timestamp=self.last_tx_time)
@@ -235,7 +272,11 @@ class SerialBridgeWorker(threading.Thread):
         now = time.time()
         if now < self.next_send_time:
             return
-        self._send_command(self.current_command)
+        try:
+            self._send_command(self.current_command)
+        except Exception as exc:
+            self.emit("error", message=str(exc))
+            return
         self.next_send_time = now + (1.0 / max(self.send_hz, 1.0))
 
     def _read_once(self) -> None:
@@ -285,7 +326,7 @@ class MotorSerialGui:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def _build_variables(self) -> None:
-        default_port = detect_default_port("COM13")
+        default_port = detect_default_port()
         self.port_var = tk.StringVar(value=default_port)
         self.baudrate_var = tk.StringVar(value="115200")
         self.timeout_var = tk.StringVar(value="0.02")
@@ -372,8 +413,8 @@ class MotorSerialGui:
             frame.columnconfigure(idx, weight=1)
 
         ttk.Label(frame, text="Port").grid(row=0, column=0, sticky="w")
-        port_combo = ttk.Combobox(frame, textvariable=self.port_var, values=list_available_ports(), width=12)
-        port_combo.grid(row=0, column=1, sticky="ew", padx=4)
+        self.port_combo = ttk.Combobox(frame, textvariable=self.port_var, values=list_available_ports(), width=16)
+        self.port_combo.grid(row=0, column=1, sticky="ew", padx=4)
 
         ttk.Label(frame, text="Baudrate").grid(row=0, column=2, sticky="w")
         ttk.Entry(frame, textvariable=self.baudrate_var, width=12).grid(row=0, column=3, sticky="ew", padx=4)
@@ -540,12 +581,13 @@ class MotorSerialGui:
 
     def refresh_ports(self) -> None:
         ports = list_available_ports()
+        self.port_combo.configure(values=ports)
         self._append_log("Available ports: " + (", ".join(ports) if ports else "<none>"))
 
     def connect_bridge(self) -> None:
         try:
             config = SerialBridgeConfig(
-                port=self.port_var.get().strip(),
+                port=normalize_serial_port(self.port_var.get()),
                 baudrate=int(self.baudrate_var.get().strip()),
                 timeout=float(self.timeout_var.get().strip()),
                 open_delay_s=float(self.open_delay_var.get().strip()),
@@ -633,6 +675,7 @@ class MotorSerialGui:
             return
         if event_type == "disconnected":
             self.connected = False
+            self.continuous_send_var.set(False)
             self.last_board_line = ""
             self.last_board_line_var.set("--")
             return

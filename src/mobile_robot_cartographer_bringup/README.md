@@ -14,7 +14,7 @@
 
 默认也复用当前工作空间已经在用的硬件配置：
 
-- 底盘/IMU 参数：`imu_car_ros2/config/car_params.yaml`
+- 底盘/IMU 参数：`car_ctrl/config/ddsm_hat_diff_drive.yaml`
 - 雷达参数：`lslidar_driver/params/lsx10.yaml`
 - 地图保存目录：工作空间根目录下的 `maps/`
 
@@ -90,9 +90,9 @@ ros2 launch mobile_robot_cartographer_bringup cartographer_mapping.launch.py
 
 默认会一起启动：
 
-- `imu_car_ros2` 的 `car_controller`
-- `imu_car_ros2` 的 `imu_driver`
-- `imu_car_ros2` 的 `car_odometry`
+- `car_ctrl` 的 `ddsm_hat_diff_drive_node`
+- `car_ctrl` 的 `imu_driver`
+- `car_ctrl` 的 `car_odometry`
 - `lslidar_driver`
 - `base_link -> laser_link` 静态 TF
 - `cartographer_node`

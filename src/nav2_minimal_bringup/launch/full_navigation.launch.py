@@ -25,7 +25,7 @@ def _package_file(package_name: str, *relative_path: str) -> str:
 
 def _car_node(executable_name: str, params_file: LaunchConfiguration) -> Node:
     return Node(
-        package="imu_car_ros2",
+        package="car_ctrl",
         executable=executable_name,
         output="screen",
         emulate_tty=True,
@@ -35,7 +35,7 @@ def _car_node(executable_name: str, params_file: LaunchConfiguration) -> Node:
 
 def generate_launch_description():
     pkg_share = get_package_share_directory("mobile_robot_nav_bringup")
-    car_params_default = _package_file("imu_car_ros2", "config", "car_params.yaml")
+    car_params_default = _package_file("car_ctrl", "config", "ddsm_hat_diff_drive.yaml")
     lidar_params_default = _package_file("lslidar_driver", "params", "lsx10.yaml")
     lidar_rviz_default = _package_file("lslidar_driver", "rviz", "lslidar.rviz")
 
@@ -139,7 +139,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "use_nav_rviz",
-                default_value="false",
+                default_value="true",
                 description="Start Nav2 RViz with the integrated bringup. Keep false on SBCs unless actively debugging.",
             ),
             DeclareLaunchArgument(
@@ -166,7 +166,7 @@ def generate_launch_description():
                 default_value="info",
                 description="Logging level for Nav2 nodes.",
             ),
-            _car_node("car_controller", car_params_file),
+            _car_node("ddsm_hat_diff_drive_node", car_params_file),
             _car_node("imu_driver", car_params_file),
             _car_node("car_odometry", car_params_file),
             Node(

@@ -27,6 +27,14 @@
 python .\motor_can_gui.py
 ```
 
+Linux 下直接运行：
+
+```bash
+python3 motor_can_gui.py
+```
+
+GUI 会优先选择 `/dev/ttyACM2`。如果只输入 `ttyACM2`，程序会自动转换成 `/dev/ttyACM2`。
+
 ## 2. 启动命令行控制脚本
 
 `motor_can_control.py` 是命令行版本，必须带子命令启动。

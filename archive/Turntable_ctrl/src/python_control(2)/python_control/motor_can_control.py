@@ -35,8 +35,8 @@ CMD_REBOOT = CMD_CLEAR_ERROR  # legacy alias
 
 @dataclass(frozen=True)
 class MotorLimits:
-    pos_min: float = -12.56
-    pos_max: float = 12.56
+    pos_min: float = -25.12
+    pos_max: float = 25.12
     vel_min: float = -45.0
     vel_max: float = 45.0
     kp_min: float = 0.0

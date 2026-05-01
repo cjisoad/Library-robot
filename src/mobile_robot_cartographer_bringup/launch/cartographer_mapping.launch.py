@@ -14,7 +14,7 @@ def _package_file(package_name: str, *relative_path: str) -> str:
 
 def _car_node(executable_name: str, params_file: LaunchConfiguration, condition: IfCondition) -> Node:
     return Node(
-        package="imu_car_ros2",
+        package="car_ctrl",
         executable=executable_name,
         output="screen",
         emulate_tty=True,
@@ -130,7 +130,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "car_params_file",
-                default_value=_package_file("imu_car_ros2", "config", "car_params.yaml"),
+                default_value=_package_file("car_ctrl", "config", "ddsm_hat_diff_drive.yaml"),
                 description="Full path to the car controller and IMU parameters file.",
             ),
             DeclareLaunchArgument(
@@ -173,7 +173,7 @@ def generate_launch_description():
                 default_value="true",
                 description="Publish the static transform from base_link to laser_link.",
             ),
-            _car_node("car_controller", car_params_file, start_robot_drivers_condition),
+            _car_node("ddsm_hat_diff_drive_node", car_params_file, start_robot_drivers_condition),
             _car_node("imu_driver", car_params_file, start_robot_drivers_condition),
             _car_node("car_odometry", car_params_file, start_robot_drivers_condition),
             Node(

@@ -10,7 +10,7 @@
 
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>cartographer_ros</exec_depend>
-  <exec_depend>imu_car_ros2</exec_depend>
+  <exec_depend>car_ctrl</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>lslidar_driver</exec_depend>
