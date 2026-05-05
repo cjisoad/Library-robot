@@ -11,11 +11,18 @@ from launch_ros.actions import Node
 def generate_launch_description():
     pkg_share = get_package_share_directory('mobile_robot_nav_bringup')
     slam_toolbox_share = get_package_share_directory('slam_toolbox')
+    lidar_params_default = os.path.join(
+        get_package_share_directory('lslidar_driver'),
+        'params',
+        'lsx10.yaml',
+    )
 
     use_sim_time = LaunchConfiguration('use_sim_time')
     slam_params_file = LaunchConfiguration('slam_params_file')
+    lidar_params_file = LaunchConfiguration('lidar_params_file')
     autostart = LaunchConfiguration('autostart')
     use_rviz = LaunchConfiguration('use_rviz')
+    start_lidar = LaunchConfiguration('start_lidar')
     rviz_config = LaunchConfiguration('rviz_config')
 
     slam_node = Node(
@@ -68,6 +75,15 @@ def generate_launch_description():
         ],
     )
 
+    lidar_node = Node(
+        condition=IfCondition(start_lidar),
+        package='lslidar_driver',
+        executable='lslidar_driver_node',
+        output='screen',
+        emulate_tty=True,
+        parameters=[lidar_params_file],
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument(
             'use_sim_time',
@@ -80,9 +96,19 @@ def generate_launch_description():
             description='Full path to the SLAM parameters file.',
         ),
         DeclareLaunchArgument(
+            'lidar_params_file',
+            default_value=lidar_params_default,
+            description='Full path to the lidar driver parameters file.',
+        ),
+        DeclareLaunchArgument(
             'autostart',
             default_value='true',
             description='Automatically configure and activate slam_toolbox.',
+        ),
+        DeclareLaunchArgument(
+            'start_lidar',
+            default_value='true',
+            description='Start the lidar driver so slam_toolbox receives /scan.',
         ),
         DeclareLaunchArgument(
             'use_rviz',
@@ -98,4 +124,5 @@ def generate_launch_description():
         lifecycle_manager,
         rviz_node,
         laser_static_tf,
+        lidar_node,
     ])

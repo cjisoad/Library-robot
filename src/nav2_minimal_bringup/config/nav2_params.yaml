@@ -1,12 +1,12 @@
 amcl:
   ros__parameters:
     use_sim_time: false
-    # Conservative AMCL tuning for Raspberry Pi-class SBCs.
-    alpha1: 0.2
-    alpha2: 0.2
-    alpha3: 0.2
-    alpha4: 0.2
-    alpha5: 0.2
+    # Accuracy-oriented AMCL tuning for the N150 mini PC.
+    alpha1: 0.12
+    alpha2: 0.12
+    alpha3: 0.12
+    alpha4: 0.12
+    alpha5: 0.12
     base_frame_id: "base_link"
     beam_skip_distance: 0.5
     beam_skip_error_threshold: 0.9
@@ -14,30 +14,30 @@ amcl:
     do_beamskip: false
     global_frame_id: "map"
     lambda_short: 0.1
-    laser_likelihood_max_dist: 2.0
+    laser_likelihood_max_dist: 1.5
     laser_max_range: 30.0
     laser_min_range: 0.0
     laser_model_type: "likelihood_field"
-    max_beams: 40
-    max_particles: 1200
-    min_particles: 300
+    max_beams: 80
+    max_particles: 2500
+    min_particles: 600
     odom_frame_id: "odom"
-    pf_err: 0.05
+    pf_err: 0.03
     pf_z: 0.99
     recovery_alpha_fast: 0.0
     recovery_alpha_slow: 0.0
-    resample_interval: 2
+    resample_interval: 1
     robot_model_type: "nav2_amcl::DifferentialMotionModel"
-    save_pose_rate: 0.5
-    sigma_hit: 0.2
+    save_pose_rate: 1.0
+    sigma_hit: 0.15
     tf_broadcast: true
     transform_tolerance: 1.0
-    update_min_a: 0.35
-    update_min_d: 0.35
-    z_hit: 0.5
-    z_max: 0.05
-    z_rand: 0.5
-    z_short: 0.05
+    update_min_a: 0.15
+    update_min_d: 0.12
+    z_hit: 0.70
+    z_max: 0.03
+    z_rand: 0.25
+    z_short: 0.02
     scan_topic: /scan
 
 bt_navigator:
@@ -46,8 +46,8 @@ bt_navigator:
     global_frame: map
     robot_base_frame: base_link
     odom_topic: /odom
-    # 50 ms keeps BT responsive while avoiding a 100 Hz tick on low-power CPUs.
-    bt_loop_duration: 50
+    # N150 has enough headroom for a more responsive behavior tree tick.
+    bt_loop_duration: 25
     # Increase BT action/service wait tolerance for real robot startup jitter.
     default_server_timeout: 1000
     wait_for_service_timeout: 5000
@@ -76,80 +76,89 @@ bt_navigator_navigate_to_pose_rclcpp_node:
 controller_server:
   ros__parameters:
     use_sim_time: false
-    # Lower controller update rate and sampling density to reduce DWB load.
-    controller_frequency: 6.0
+    # Accuracy-oriented DWB tuning for the N150 mini PC.
+    controller_frequency: 10.0
     min_x_velocity_threshold: 0.02
     min_y_velocity_threshold: 0.0
     min_theta_velocity_threshold: 0.03
-    failure_tolerance: 0.5
+    failure_tolerance: 0.3
     progress_checker_plugins: ["progress_checker"]
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.2
-      movement_time_allowance: 20.0
+      required_movement_radius: 0.12
+      movement_time_allowance: 15.0
     general_goal_checker:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.35
-      yaw_goal_tolerance: 0.45
+      xy_goal_tolerance: 0.18
+      yaw_goal_tolerance: 0.25
     FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
+      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      primary_controller: "dwb_core::DWBLocalPlanner"
+
+      # Rotation Shim 参数：起步先转向
+      angular_dist_threshold: 0.785
+      forward_sampling_distance: 0.5
+      rotate_to_heading_angular_vel: 1.0
+      max_angular_accel: 5.0
+      simulate_ahead_time: 1.0
+
       debug_trajectory_details: false
       # Allow reverse trajectories so goals behind the robot do not force a stall.
-      min_vel_x: -0.22
+      min_vel_x: -0.12
       min_vel_y: 0.0
-      max_vel_x: 0.45
+      max_vel_x: 0.30
       max_vel_y: 0.0
-      max_vel_theta: 0.45
+      max_vel_theta: 0.8
       min_speed_xy: 0.0
-      max_speed_xy: 0.45
-      min_speed_theta: 0.12
-      acc_lim_x: 0.5
+      max_speed_xy: 0.30
+      min_speed_theta: 0.08
+      acc_lim_x: 0.25
       acc_lim_y: 0.0
-      acc_lim_theta: 0.6
-      decel_lim_x: -0.7
+      acc_lim_theta: 1.0
+      decel_lim_x: -0.35
       decel_lim_y: 0.0
-      decel_lim_theta: -0.8
-      vx_samples: 16
+      decel_lim_theta: -0.45
+      vx_samples: 24
       vy_samples: 1
-      vtheta_samples: 12
-      sim_time: 1.2
-      linear_granularity: 0.06
-      angular_granularity: 0.05
-      transform_tolerance: 0.7
-      xy_goal_tolerance: 0.35
-      trans_stopped_velocity: 0.05
-      short_circuit_trajectory_evaluation: true
+      vtheta_samples: 24
+      sim_time: 1.7
+      linear_granularity: 0.03
+      angular_granularity: 0.025
+      transform_tolerance: 0.5
+      xy_goal_tolerance: 0.18
+      trans_stopped_velocity: 0.03
+      short_circuit_trajectory_evaluation: false
       stateful: true
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.02
-      # Reduce forward-only bias so DWB can choose backing into a goal behind the robot.
-      PathAlign.scale: 10.0
-      PathAlign.forward_point_distance: 0.05
-      GoalAlign.scale: 8.0
-      GoalAlign.forward_point_distance: 0.05
-      PathDist.scale: 24.0
-      GoalDist.scale: 18.0
-      RotateToGoal.scale: 8.0
-      RotateToGoal.slowing_factor: 8.0
+      BaseObstacle.scale: 0.08
+      # Keep reverse available while evaluating heading alignment farther ahead.
+      PathAlign.scale: 14.0
+      PathAlign.forward_point_distance: 0.12
+      GoalAlign.scale: 12.0
+      GoalAlign.forward_point_distance: 0.12
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+      RotateToGoal.scale: 12.0
+      RotateToGoal.slowing_factor: 6.0
       RotateToGoal.lookahead_time: -1.0
 
 local_costmap:
   local_costmap:
     ros__parameters:
-      # Coarser rolling costmap significantly reduces cell updates on SBCs.
-      update_frequency: 4.0
-      publish_frequency: 1.0
+      # Accuracy-oriented rolling costmap for the N150 mini PC.
+      update_frequency: 10.0
+      publish_frequency: 5.0
       global_frame: odom
       robot_base_frame: base_link
       use_sim_time: false
       rolling_window: true
-      width: 4
-      height: 4
-      resolution: 0.08
-      footprint: "[[0.345, 0.42], [0.345, -0.42], [-0.345, -0.42], [-0.345, 0.42]]"
+      width: 5
+      height: 5
+      resolution: 0.05
+      footprint: "[[0.31, 0.39], [0.31, -0.39], [-0.31, -0.39], [-0.31, 0.39]]"
       footprint_padding: 0.02
       always_send_full_costmap: false
       plugins: ["obstacle_layer", "inflation_layer"]
@@ -162,26 +171,25 @@ local_costmap:
           data_type: "LaserScan"
           clearing: true
           marking: true
-          obstacle_max_range: 2.2
+          obstacle_max_range: 3.0
           obstacle_min_range: 0.0
-          raytrace_max_range: 2.8
+          raytrace_max_range: 3.5
           raytrace_min_range: 0.0
           max_obstacle_height: 2.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 5.0
-        inflation_radius: 0.35
-
+        cost_scaling_factor: 2.8
+        inflation_radius: 0.8
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 0.5
-      publish_frequency: 0.5
+      update_frequency: 2.0
+      publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_link
       use_sim_time: false
-      resolution: 0.10
-      footprint: "[[0.345, 0.42], [0.345, -0.42], [-0.345, -0.42], [-0.345, 0.42]]"
+      resolution: 0.05
+      footprint: "[[0.31, 0.39], [0.31, -0.39], [-0.31, -0.39], [-0.31, 0.39]]"
       footprint_padding: 0.02
       track_unknown_space: true
       always_send_full_costmap: false
@@ -198,15 +206,15 @@ global_costmap:
           data_type: "LaserScan"
           clearing: true
           marking: true
-          obstacle_max_range: 2.2
+          obstacle_max_range: 3.0
           obstacle_min_range: 0.0
-          raytrace_max_range: 2.8
+          raytrace_max_range: 3.5
           raytrace_min_range: 0.0
           max_obstacle_height: 2.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 4.0
-        inflation_radius: 0.45
+        cost_scaling_factor: 3.0
+        inflation_radius: 1.1
 
 map_server:
   ros__parameters:
@@ -223,14 +231,21 @@ map_saver:
 
 planner_server:
   ros__parameters:
-    expected_planner_frequency: 1.0
+    expected_planner_frequency: 2.0
     use_sim_time: false
     planner_plugins: ["GridBased"]
+
     GridBased:
-      plugin: "nav2_navfn_planner::NavfnPlanner"
-      tolerance: 0.5
-      use_astar: false
+      plugin: "nav2_smac_planner::SmacPlanner2D"
+      tolerance: 0.25
+      downsample_costmap: false
+      downsampling_factor: 1
       allow_unknown: true
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 2.0
+      cost_travel_multiplier: 2.0
+      use_final_approach_orientation: false
 
 smoother_server:
   ros__parameters:
@@ -239,15 +254,15 @@ smoother_server:
     simple_smoother:
       plugin: "nav2_smoother::SimpleSmoother"
       tolerance: 1.0e-10
-      max_its: 200
-      do_refinement: false
+      max_its: 300
+      do_refinement: true
 
 behavior_server:
   ros__parameters:
     use_sim_time: false
     costmap_topic: local_costmap/costmap_raw
     footprint_topic: local_costmap/published_footprint
-    cycle_frequency: 5.0
+    cycle_frequency: 10.0
     behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
     spin:
       plugin: "nav2_behaviors::Spin"
@@ -260,10 +275,10 @@ behavior_server:
     global_frame: odom
     robot_base_frame: base_link
     transform_tolerance: 0.5
-    simulate_ahead_time: 1.5
-    max_rotational_vel: 0.6
-    min_rotational_vel: 0.2
-    rotational_acc_lim: 0.8
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 0.8
+    min_rotational_vel: 0.15
+    rotational_acc_lim: 1.0
 
 robot_state_publisher:
   ros__parameters:
@@ -283,17 +298,17 @@ waypoint_follower:
 velocity_smoother:
   ros__parameters:
     use_sim_time: false
-    smoothing_frequency: 25.0
+    smoothing_frequency: 30.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.55, 0.0, 0.8]
-    min_velocity: [-0.2, 0.0, -0.8]
-    max_accel: [0.6, 0.0, 1.0]
-    max_decel: [-0.8, 0.0, -1.2]
+    max_velocity: [0.30, 0.0, 0.8]
+    min_velocity: [-0.12, 0.0, -0.8]
+    max_accel: [0.25, 0.0, 1.0]
+    max_decel: [-0.35, 0.0, -1.20]
     odom_topic: "odom"
     odom_duration: 0.1
-    deadband_velocity: [0.08, 0.0, 0.18]
-    velocity_timeout: 1.0
+    deadband_velocity: [0.01, 0.0, 0.02]
+    velocity_timeout: 0.5
 
 collision_monitor:
   ros__parameters:
@@ -311,9 +326,9 @@ collision_monitor:
       type: "polygon"
       action_type: "approach"
       footprint_topic: "/local_costmap/published_footprint"
-      time_before_collision: 1.6
-      simulation_time_step: 0.1
-      min_points: 6
+      time_before_collision: 1.8
+      simulation_time_step: 0.025
+      min_points: 4
       visualize: false
       enabled: true
     observation_sources: ["scan"]
@@ -362,5 +377,5 @@ docking_server:
       footprint_topic: "local_costmap/published_footprint"
       transform_tolerance: 0.5
       projection_time: 5.0
-      simulation_step: 0.1
+      simulation_step: 0.05
       dock_collision_threshold: 0.3

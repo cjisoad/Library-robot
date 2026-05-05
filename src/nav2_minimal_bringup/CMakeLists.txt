@@ -7,6 +7,7 @@ install(
   PROGRAMS
     scripts/keyboard_cmd_vel_test.py
     scripts/initial_pose_nav_startup.py
+    scripts/clicked_point_cost_inspector.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

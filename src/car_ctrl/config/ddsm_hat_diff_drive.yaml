@@ -40,7 +40,7 @@ imu_driver:
     imu_baud_rate: 9600
     imu_topic: /imu/data_raw
     imu_frame: imu_link
-    read_period: 0.01
+    read_period: 0.005
 
 car_odometry:
   ros__parameters:
@@ -65,7 +65,7 @@ car_odometry:
     imu_angular_velocity_scale: 1.0
     imu_angular_velocity_bias: 0.0
     publish_rate: 50.0
-    imu_timeout: 0.5
+    imu_timeout: 0.6
     imu_error_log_period: 1.0
     enable_angle_debug: false
     debug_log_period: 0.5

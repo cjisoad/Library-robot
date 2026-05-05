@@ -17,10 +17,10 @@ NAV2_CONTAINER_NAME = 'nav2_container'
 def _default_map_yaml(pkg_share: str) -> str:
     pkg_share_path = Path(pkg_share)
     workspace_root = pkg_share_path.parents[3]
-    workspace_map = workspace_root / 'maps' / 'my_map.yaml'
+    workspace_map = workspace_root / 'maps' / 'aoxiao_lab.yaml'
     if workspace_map.is_file():
         return str(workspace_map)
-    return str(pkg_share_path / 'maps' / 'my_map.yaml')
+    return str(pkg_share_path / 'maps' / 'aoxiao_lab.yaml')
 
 
 def generate_launch_description():
@@ -163,8 +163,8 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'use_composition',
-            default_value='True',
-            description='Compose Nav2 nodes into a single container to reduce SBC CPU and memory overhead.',
+            default_value='False',
+            description='Run Nav2 nodes as separate processes so nested costmap parameters load reliably.',
         ),
         DeclareLaunchArgument(
             'use_respawn',
