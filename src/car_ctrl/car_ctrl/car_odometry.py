@@ -263,7 +263,7 @@ class CarOdometry(Node):
         if now - self.last_imu_error_log_time < self.imu_error_log_period:
             return
         self.last_imu_error_log_time = now
-        self.get_logger().error("IMU 无反馈或已超时，跳过本次里程计更新")
+        self.get_logger().warning("IMU 无反馈或已超时，跳过本次里程计更新")
 
     def publish_debug_angle(self, stamp) -> None:
         odom_yaw_deg = math.degrees(self.accumulated_yaw)

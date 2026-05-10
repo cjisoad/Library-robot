@@ -101,8 +101,8 @@ controller_server:
       # Rotation Shim 参数：起步先转向
       angular_dist_threshold: 0.785
       forward_sampling_distance: 0.5
-      rotate_to_heading_angular_vel: 1.0
-      max_angular_accel: 5.0
+      rotate_to_heading_angular_vel: 0.8
+      max_angular_accel: 4.0
       simulate_ahead_time: 1.0
 
       debug_trajectory_details: false

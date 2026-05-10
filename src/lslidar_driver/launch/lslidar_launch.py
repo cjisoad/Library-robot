@@ -18,7 +18,7 @@ def generate_launch_description():
                                 name='lslidar_driver_node',		#设置激光数据topic名称
                                 output='screen',
                                 emulate_tty=True,
-                                namespace='',
+                                namespace='lidar_1',
                                 parameters=[driver_dir],
                                 )
 
@@ -37,4 +37,3 @@ def generate_launch_description():
         driver_node,
         rviz_node,
     ])
-

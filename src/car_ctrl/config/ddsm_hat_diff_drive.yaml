@@ -5,7 +5,7 @@ ddsm_hat_diff_drive:
 
     # Update these two values to match the chassis geometry.
     wheel_radius: 0.05
-    wheel_track: 0.33
+    wheel_track: 0.72
 
     # Motor physical layout: 1=left front, 2=right front, 3=left rear, 4=right rear.
     # The right side is installed in the opposite direction, so forward chassis

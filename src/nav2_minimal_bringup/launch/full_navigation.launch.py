@@ -36,13 +36,16 @@ def _car_node(executable_name: str, params_file: LaunchConfiguration) -> Node:
 def generate_launch_description():
     pkg_share = get_package_share_directory("mobile_robot_nav_bringup")
     car_params_default = _package_file("car_ctrl", "config", "ddsm_hat_diff_drive.yaml")
-    lidar_params_default = _package_file("lslidar_driver", "params", "lsx10.yaml")
+    lidar_params_default = _package_file("lslidar_driver", "params", "lsx10_1.yaml")
+    lidar_2_params_default = _package_file("lslidar_driver", "params", "lsx10_2.yaml")
     lidar_rviz_default = _package_file("lslidar_driver", "rviz", "lslidar.rviz")
 
     map_yaml = LaunchConfiguration("map")
     nav2_params_file = LaunchConfiguration("nav2_params_file")
     car_params_file = LaunchConfiguration("car_params_file")
     lidar_params_file = LaunchConfiguration("lidar_params_file")
+    lidar_2_params_file = LaunchConfiguration("lidar_2_params_file")
+    laser_merger_target_frame = LaunchConfiguration("laser_merger_target_frame")
     use_sim_time = LaunchConfiguration("use_sim_time")
     autostart = LaunchConfiguration("autostart")
     navigation_autostart = LaunchConfiguration("navigation_autostart")
@@ -85,6 +88,57 @@ def generate_launch_description():
         condition=IfCondition(use_lidar_rviz),
     )
 
+    # ENU: right turn around +Z is negative yaw.
+    laser_static_tf = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="base_to_front_laser_tf",
+        output="screen",
+        arguments=[
+            "--x",
+            "0.295",
+            "--y",
+            "0.0",
+            "--z",
+            "0.0",
+            "--roll",
+            "0.0",
+            "--pitch",
+            "0.0",
+            "--yaw",
+            "-0.78539816339",
+            "--frame-id",
+            "base_link",
+            "--child-frame-id",
+            "laser_link",
+        ],
+    )
+
+    back_laser_static_tf = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="base_to_back_laser_tf",
+        output="screen",
+        arguments=[
+            "--x",
+            "-0.28",
+            "--y",
+            "-0.28",
+            "--z",
+            "0.0",
+            "--roll",
+            "0.0",
+            "--pitch",
+            "0.0",
+            "--yaw",
+            "-0.78539816339",
+            "--frame-id",
+            "base_link",
+            "--child-frame-id",
+            "laser_link_b",
+        ],
+    )
+
     return LaunchDescription(
         [
             DeclareLaunchArgument(
@@ -105,7 +159,17 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "lidar_params_file",
                 default_value=lidar_params_default,
-                description="Full path to the lidar driver parameters file.",
+                description="Full path to the front lidar driver parameters file.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_2_params_file",
+                default_value=lidar_2_params_default,
+                description="Full path to the rear lidar driver parameters file.",
+            ),
+            DeclareLaunchArgument(
+                "laser_merger_target_frame",
+                default_value="base_link",
+                description="Target frame for the dual laser merger output.",
             ),
             DeclareLaunchArgument(
                 "use_sim_time",
@@ -169,12 +233,60 @@ def generate_launch_description():
             _car_node("ddsm_hat_diff_drive_node", car_params_file),
             _car_node("imu_driver", car_params_file),
             _car_node("car_odometry", car_params_file),
+            laser_static_tf,
+            back_laser_static_tf,
             Node(
                 package="lslidar_driver",
                 executable="lslidar_driver_node",
+                namespace="lidar_1",
                 output="screen",
                 emulate_tty=True,
                 parameters=[lidar_params_file],
+            ),
+            Node(
+                package="lslidar_driver",
+                executable="lslidar_driver_node",
+                namespace="lidar_2",
+                output="screen",
+                emulate_tty=True,
+                parameters=[lidar_2_params_file],
+            ),
+            Node(
+                package="dual_laser_merger",
+                executable="dual_laser_merger_node",
+                name="dual_laser_merger",
+                output="screen",
+                emulate_tty=True,
+                parameters=[
+                    {
+                        "laser_1_topic": "/scan_f",
+                        "laser_2_topic": "/scan_b",
+                        "merged_scan_topic": "/scan",
+                        "merged_cloud_topic": "/merged_cloud",
+                        "target_frame": laser_merger_target_frame,
+                        "laser_1_x_offset": 0.0,
+                        "laser_1_y_offset": 0.0,
+                        "laser_1_yaw_offset": 0.0,
+                        "laser_2_x_offset": 0.0,
+                        "laser_2_y_offset": 0.0,
+                        "laser_2_yaw_offset": 0.0,
+                        "tolerance": 0.01,
+                        "queue_size": 5,
+                        "angle_increment": 0.001,
+                        "scan_time": 0.1,
+                        "range_min": 0.01,
+                        "range_max": 25.0,
+                        "min_height": -1.0,
+                        "max_height": 1.0,
+                        "angle_min": -3.141592654,
+                        "angle_max": 3.141592654,
+                        "inf_epsilon": 1.0,
+                        "use_inf": True,
+                        "allowed_radius": 0.45,
+                        "enable_shadow_filter": True,
+                        "enable_average_filter": False,
+                    }
+                ],
             ),
             lidar_rviz,
             navigation_launch,

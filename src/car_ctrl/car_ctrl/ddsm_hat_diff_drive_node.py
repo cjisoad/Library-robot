@@ -52,6 +52,9 @@ class DDSMDriverHat:
         if self._serial.is_open:
             self._serial.close()
 
+    def reset_output_buffer(self) -> None:
+        self._serial.reset_output_buffer()
+
     def send(self, command: Dict[str, int], log_debug: bool = False) -> None:
         payload = json.dumps(command, separators=(",", ":")).encode("utf-8") + b"\n"
         if log_debug:
@@ -170,6 +173,8 @@ class DDSMHatDiffDriveNode(Node):
         self._command_lock = threading.Lock()
         self._last_commanded_rpms = {motor_id: 0 for motor_id in self.motor_ids}
         self._last_tx_time = time.monotonic()
+        self._last_tx_error_log_time = 0.0
+        self._tx_error_count = 0
         self._running = True
 
         self._wheel_speed_pub = self.create_publisher(
@@ -228,9 +233,13 @@ class DDSMHatDiffDriveNode(Node):
         period = 1.0 / self.command_rate_hz
         next_wake = time.monotonic()
         while self._running:
-            self._update_targets_from_cmd()
-            self._ramp_current_rpms()
-            self._send_current_rpms()
+            try:
+                self._update_targets_from_cmd()
+                self._ramp_current_rpms()
+                self._send_current_rpms()
+                self._tx_error_count = 0
+            except Exception as exc:
+                self._handle_tx_error(exc)
 
             next_wake += period
             sleep_s = next_wake - time.monotonic()
@@ -284,13 +293,34 @@ class DDSMHatDiffDriveNode(Node):
             }
             for motor_id in self.command_order
         ]
+        self._send_batch(commands)
         with self._command_lock:
             self._last_commanded_rpms = {
                 command["id"]: command["cmd"]
                 for command in commands
             }
-        self._send_batch(commands)
         self._publish_wheel_states()
+
+    def _handle_tx_error(self, exc: Exception) -> None:
+        self._tx_error_count += 1
+        self._target_rpms = [0.0, 0.0, 0.0, 0.0]
+        self._current_rpms = [0.0, 0.0, 0.0, 0.0]
+
+        try:
+            self._hat.reset_output_buffer()
+        except Exception as reset_exc:
+            self._log_tx_error(f"{exc}; failed to reset serial output buffer: {reset_exc}")
+            return
+
+        self._log_tx_error(str(exc))
+
+    def _log_tx_error(self, message: str) -> None:
+        now = time.monotonic()
+        if self._tx_error_count == 1 or now - self._last_tx_error_log_time >= 1.0:
+            self.get_logger().warn(
+                f"serial tx failed ({self._tx_error_count} consecutive): {message}"
+            )
+            self._last_tx_error_log_time = now
 
     def _send_stop(self) -> None:
         commands = [
@@ -476,7 +506,8 @@ def main(args: Optional[List[str]] = None) -> None:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

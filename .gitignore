@@ -1,6 +1,8 @@
 build/
 install/
 log/
+logs/
+src/dual_laser_merger/bag/
 
 .DS_Store
 *.pyc

@@ -112,24 +112,6 @@ def generate_launch_description():
         condition=IfCondition(startup_navigation_on_initial_pose),
     )
 
-    # ENU: right turn around +Z is negative yaw.
-    laser_static_tf = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='base_to_laser_tf',
-        output='screen',
-        arguments=[
-            '--x', '0.295',
-            '--y', '0.0',
-            '--z', '0.0',
-            '--roll', '0.0',
-            '--pitch', '0.0',
-            '--yaw', '-0.78539816339',
-            '--frame-id', 'base_link',
-            '--child-frame-id', 'laser_link',
-        ],
-    )
-
     return LaunchDescription([
         DeclareLaunchArgument(
             'map',
@@ -191,5 +173,4 @@ def generate_launch_description():
         navigation_launch,
         nav_startup_helper,
         rviz_launch,
-        laser_static_tf,
     ])
