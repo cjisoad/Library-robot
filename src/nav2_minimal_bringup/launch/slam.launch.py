@@ -123,6 +123,6 @@ def generate_launch_description():
         slam_node,
         lifecycle_manager,
         rviz_node,
-        laser_static_tf,
-        lidar_node,
+        # laser_static_tf,
+        # lidar_node,
     ])

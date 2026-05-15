@@ -17,10 +17,10 @@ NAV2_CONTAINER_NAME = 'nav2_container'
 def _default_map_yaml(pkg_share: str) -> str:
     pkg_share_path = Path(pkg_share)
     workspace_root = pkg_share_path.parents[3]
-    workspace_map = workspace_root / 'maps' / 'aoxiao_lab.yaml'
+    workspace_map = workspace_root / 'maps' / 'awesome_map.yaml'
     if workspace_map.is_file():
         return str(workspace_map)
-    return str(pkg_share_path / 'maps' / 'aoxiao_lab.yaml')
+    return str(pkg_share_path / 'maps' / 'awesome_map.yaml')
 
 
 def generate_launch_description():

@@ -1,0 +1,43 @@
+cruise:
+  loop: true
+  point_order:
+    - point3
+    - point1
+
+
+fine_tune:
+  enabled: true
+  target_point: point3
+  start_service: /point3_fine_tune/start
+  wait_for_terminal_continue: true
+  cmd_vel_topic: /cmd_vel
+  target_frame: map
+  base_frame: base_link
+  control_rate_hz: 8.0
+  x_tolerance: 0.03
+  yaw_tolerance: 0.05
+  max_linear_speed: 0.05
+  max_angular_speed: 0.20
+  k_x: 0.6
+  k_yaw: 1.0
+  timeout_sec: 20.0
+
+points:
+  point1: # room
+    frame_id: map
+    x: 1.582560
+    y: -0.242656
+    z: 0.0
+    yaw: -0.160510
+  point2: # outside
+    frame_id: map
+    x: 2.232267
+    y: 3.072457
+    z: 0.0
+    yaw: 0.004395
+  point3: #target
+    frame_id: map
+    x: 0.202929
+    y: -0.177841
+    z: 0.0
+    yaw: -0.063388
