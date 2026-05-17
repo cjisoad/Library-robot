@@ -13,6 +13,7 @@ setup(
         (f"share/{package_name}", ["package.xml"]),
         (f"share/{package_name}/config", glob("config/*.yaml")),
         (f"share/{package_name}/launch", glob("launch/*.launch.py")),
+        (f"share/{package_name}/target", glob("target/*.jpg")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -25,6 +26,7 @@ setup(
             "init_pose_node = robot_decision.init_pose_node:main",
             "cruise_node = robot_decision.cruise_node:main",
             "point3_fine_tune_node = robot_decision.point3_fine_tune_node:main",
+            "book_center_detector_node = robot_decision.book_center_detector_node:main",
         ],
     },
 )

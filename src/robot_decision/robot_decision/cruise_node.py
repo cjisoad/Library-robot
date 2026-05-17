@@ -12,6 +12,7 @@ from rclpy.node import Node
 from rcl_interfaces.msg import Parameter as ParameterMsg
 from rcl_interfaces.msg import ParameterType, ParameterValue
 from rcl_interfaces.srv import SetParameters
+from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 
 from robot_decision.pose_utils import make_pose_stamped
@@ -28,13 +29,17 @@ class CruiseNode(Node):
         self.declare_parameter("navigate_action_name", "navigate_to_pose")
         self.declare_parameter("server_timeout_sec", 2.0)
         self.declare_parameter("shutdown_when_done", True)
+        self.declare_parameter("fine_tune_done_topic", "/fine_tune/done")
 
         points_file = str(self.get_parameter("points_file").value)
         action_name = str(self.get_parameter("navigate_action_name").value)
         self.server_timeout_sec = float(self.get_parameter("server_timeout_sec").value)
         self.shutdown_when_done = bool(self.get_parameter("shutdown_when_done").value)
+        self.fine_tune_done_topic = str(self.get_parameter("fine_tune_done_topic").value)
 
-        self.points, self.loop, self.fine_tune_config = self._load_points(points_file)
+        self.points, self.point_lookup, self.loop, self.fine_tune_config = self._load_points(
+            points_file
+        )
         self.action_client = ActionClient(self, NavigateToPose, action_name)
         self.fine_tune_client = self.create_client(
             Trigger,
@@ -49,12 +54,20 @@ class CruiseNode(Node):
             SetParameters,
             self.fine_tune_config["parameter_service"],
         )
+        self.fine_tune_done_pub = self.create_publisher(
+            Bool,
+            self.fine_tune_done_topic,
+            10,
+        )
         self.current_index = 0
         self.loop_count = 1
         self._active_goal_handle = None
         self._waiting_for_terminal_continue = False
         self._pending_continue_after_fine_tune = False
         self._fine_tune_delay_timer = None
+        self._fine_tune_phase = None
+        self._fine_tune_anchor_point = None
+        self._active_fine_tune_point = None
         self._startup_timer = self.create_timer(0.5, self._start_when_ready)
 
         self.get_logger().info(
@@ -68,7 +81,7 @@ class CruiseNode(Node):
             )
         )
 
-    def _load_points(self, points_file: str) -> tuple[list[dict], bool, dict]:
+    def _load_points(self, points_file: str) -> tuple[list[dict], dict[str, dict], bool, dict]:
         with open(points_file, "r", encoding="utf-8") as stream:
             data = yaml.safe_load(stream) or {}
 
@@ -86,6 +99,7 @@ class CruiseNode(Node):
             raise RuntimeError("points config must be a mapping in %s" % points_file)
 
         points = []
+        point_lookup = {}
         for name in point_order:
             name = str(name)
             if name not in configured_points:
@@ -95,21 +109,41 @@ class CruiseNode(Node):
             if not isinstance(raw_point, dict):
                 raise RuntimeError("cruise point '%s' must be a mapping" % name)
 
-            points.append(
-                {
-                    "name": name,
-                    "frame_id": str(raw_point.get("frame_id", "map")),
-                    "x": float(raw_point["x"]),
-                    "y": float(raw_point["y"]),
-                    "z": float(raw_point.get("z", 0.0)),
-                    "yaw": float(raw_point["yaw"]),
-                }
-            )
+            point = {
+                "name": name,
+                "frame_id": str(raw_point.get("frame_id", "map")),
+                "x": float(raw_point["x"]),
+                "y": float(raw_point["y"]),
+                "z": float(raw_point.get("z", 0.0)),
+                "yaw": float(raw_point["yaw"]),
+            }
+            points.append(point)
+            point_lookup[name] = point
 
-        fine_tune_config = self._load_fine_tune_config(data, points_file)
-        return points, loop, fine_tune_config
+        for name, raw_point in configured_points.items():
+            name = str(name)
+            if name in point_lookup:
+                continue
+            if not isinstance(raw_point, dict):
+                raise RuntimeError("point '%s' must be a mapping" % name)
+            point_lookup[name] = {
+                "name": name,
+                "frame_id": str(raw_point.get("frame_id", "map")),
+                "x": float(raw_point["x"]),
+                "y": float(raw_point["y"]),
+                "z": float(raw_point.get("z", 0.0)),
+                "yaw": float(raw_point["yaw"]),
+            }
 
-    def _load_fine_tune_config(self, data: dict, points_file: str) -> dict:
+        fine_tune_config = self._load_fine_tune_config(data, points_file, point_lookup)
+        return points, point_lookup, loop, fine_tune_config
+
+    def _load_fine_tune_config(
+        self,
+        data: dict,
+        points_file: str,
+        point_lookup: dict[str, dict],
+    ) -> dict:
         fine_tune = data.get("fine_tune", {})
         if not isinstance(fine_tune, dict):
             raise RuntimeError("fine_tune config must be a mapping in %s" % points_file)
@@ -124,6 +158,28 @@ class CruiseNode(Node):
             trigger_points = []
         if not isinstance(trigger_points, list):
             raise RuntimeError("fine_tune.trigger_points must be a list in %s" % points_file)
+
+        adjacent_points = fine_tune.get("adjacent_points", {})
+        if adjacent_points is None:
+            adjacent_points = {}
+        if not isinstance(adjacent_points, dict):
+            raise RuntimeError("fine_tune.adjacent_points must be a mapping in %s" % points_file)
+
+        normalized_adjacent_points = {}
+        for source_name, adjacent_name in adjacent_points.items():
+            source_name = str(source_name)
+            adjacent_name = str(adjacent_name)
+            if source_name not in point_lookup:
+                raise RuntimeError(
+                    "fine_tune adjacent source point '%s' is missing in %s"
+                    % (source_name, points_file)
+                )
+            if adjacent_name not in point_lookup:
+                raise RuntimeError(
+                    "fine_tune adjacent point '%s' for '%s' is missing in %s"
+                    % (adjacent_name, source_name, points_file)
+                )
+            normalized_adjacent_points[source_name] = adjacent_name
 
         start_service = str(fine_tune.get("start_service", "/fine_tune/start"))
         parameter_service = str(
@@ -141,6 +197,7 @@ class CruiseNode(Node):
             "enabled": enabled,
             "trigger_mode": trigger_mode,
             "trigger_points": {str(name) for name in trigger_points},
+            "adjacent_points": normalized_adjacent_points,
             "start_service": start_service,
             "parameter_service": parameter_service,
             "settle_delay_sec": settle_delay_sec,
@@ -229,7 +286,7 @@ class CruiseNode(Node):
 
         self.get_logger().info("reached %s" % point["name"])
         if self._should_fine_tune(point):
-            self._schedule_fine_tune(point)
+            self._schedule_fine_tune(point, phase="target", anchor_point=point)
             return
 
         self.current_index += 1
@@ -242,10 +299,21 @@ class CruiseNode(Node):
             return True
         return point["name"] in self.fine_tune_config["trigger_points"]
 
-    def _schedule_fine_tune(self, point: dict) -> None:
-        delay_sec = self.fine_tune_config["settle_delay_sec"]
+    def _schedule_fine_tune(
+        self,
+        point: dict,
+        phase: str,
+        anchor_point: dict,
+        delay_sec: float | None = None,
+    ) -> None:
+        self._fine_tune_phase = phase
+        self._fine_tune_anchor_point = anchor_point
+        self._active_fine_tune_point = point
+        if delay_sec is None:
+            delay_sec = self.fine_tune_config["settle_delay_sec"]
         self.get_logger().info(
-            "waiting %.2f s before fine tune for %s" % (delay_sec, point["name"])
+            "waiting %.2f s before %s fine tune for %s"
+            % (delay_sec, phase, point["name"])
         )
         if delay_sec <= 0.0:
             self._set_fine_tune_target(point)
@@ -287,7 +355,12 @@ class CruiseNode(Node):
         future.add_done_callback(self._handle_set_fine_tune_target)
 
     def _handle_set_fine_tune_target(self, future) -> None:
-        point = self.points[self.current_index]
+        point = self._active_fine_tune_point
+        if point is None:
+            self.get_logger().error("fine tune target callback has no active point")
+            rclpy.shutdown()
+            return
+
         try:
             response = future.result()
         except Exception as exc:  # pragma: no cover - runtime ROS failure path
@@ -319,7 +392,12 @@ class CruiseNode(Node):
         future.add_done_callback(self._handle_fine_tune_result)
 
     def _handle_fine_tune_result(self, future) -> None:
-        point = self.points[self.current_index]
+        point = self._active_fine_tune_point
+        if point is None:
+            self.get_logger().error("fine tune result callback has no active point")
+            rclpy.shutdown()
+            return
+
         try:
             response = future.result()
         except Exception as exc:  # pragma: no cover - runtime ROS failure path
@@ -329,21 +407,51 @@ class CruiseNode(Node):
 
         if not response.success:
             self.get_logger().error("fine tune failed for %s: %s" % (point["name"], response.message))
+            self._publish_fine_tune_done(False)
             rclpy.shutdown()
             return
 
-        self.get_logger().info("fine tune succeeded for %s: %s" % (point["name"], response.message))
+        self.get_logger().info(
+            "%s fine tune succeeded for %s: %s"
+            % (self._fine_tune_phase, point["name"], response.message)
+        )
+        if self._fine_tune_phase == "target":
+            adjacent_name = self.fine_tune_config["adjacent_points"].get(point["name"])
+            if adjacent_name is not None:
+                adjacent_point = self.point_lookup[adjacent_name]
+                self.get_logger().info(
+                    "starting adjacent fine tune from %s to %s"
+                    % (point["name"], adjacent_point["name"])
+                )
+                self._schedule_fine_tune(
+                    adjacent_point,
+                    phase="adjacent",
+                    anchor_point=point,
+                    delay_sec=0.0,
+                )
+                return
+
         if self.fine_tune_config["wait_for_terminal_continue"]:
-            self._wait_for_terminal_continue(point)
+            self._publish_fine_tune_done(True)
+            self._wait_for_terminal_continue(self._fine_tune_anchor_point or point)
         else:
+            self._publish_fine_tune_done(True)
             self._continue_after_fine_tune()
+
+    def _publish_fine_tune_done(self, success: bool) -> None:
+        self.fine_tune_done_pub.publish(Bool(data=success))
+        self.get_logger().info(
+            "published fine tune workflow done=%s on %s"
+            % (success, self.fine_tune_done_topic)
+        )
 
     def _wait_for_terminal_continue(self, point: dict) -> None:
         self._waiting_for_terminal_continue = True
         self._pending_continue_after_fine_tune = True
+        active_point = self._active_fine_tune_point or point
         self.get_logger().info(
-            "fine tune complete at %s; call service /cruise_node/continue to continue cruise"
-            % point["name"]
+            "fine tune workflow complete for %s at %s; call service /cruise_node/continue to continue cruise"
+            % (point["name"], active_point["name"])
         )
 
     def _handle_continue_cruise(self, _request, response):

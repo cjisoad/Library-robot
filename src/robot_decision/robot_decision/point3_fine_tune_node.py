@@ -171,25 +171,39 @@ class Point3FineTuneNode(Node):
             ("yaw", self._tune_final_yaw),
         ]
 
-        for stage_name, stage_fn in stages:
-            stage_deadline = min(time.monotonic() + self.stage_timeout_sec, total_deadline)
-            success, message = stage_fn(stage_deadline, period)
-            self._publish_stop()
-            if not success:
-                return False, "%s stage failed: %s" % (stage_name, message)
+        last_errors = (0.0, 0.0, 0.0)
+        for round_index in range(1, 3):
+            self.get_logger().info("starting fine tune round %d for %s" % (round_index, self.target_point))
+            for stage_name, stage_fn in stages:
+                stage_deadline = min(time.monotonic() + self.stage_timeout_sec, total_deadline)
+                success, message = stage_fn(stage_deadline, period)
+                self._publish_stop()
+                if not success:
+                    return False, "round %d %s stage failed: %s" % (
+                        round_index,
+                        stage_name,
+                        message,
+                    )
 
-        x_error, y_error, yaw_error = self._calculate_errors()
-        if not self._position_aligned(x_error, y_error) or abs(yaw_error) > self.yaw_tolerance:
-            return False, (
-                "final check failed: x_error=%.3f y_error=%.3f yaw_error=%.3f"
-                % (x_error, y_error, yaw_error)
+            x_error, y_error, yaw_error = self._calculate_errors()
+            last_errors = (x_error, y_error, yaw_error)
+            self.get_logger().info(
+                "fine tune round %d check: x_error=%.3f y_error=%.3f yaw_error=%.3f"
+                % (round_index, x_error, y_error, yaw_error)
             )
-        msg = (
-            "fine tune complete: x_error=%.3f y_error=%.3f yaw_error=%.3f"
+            if self._position_aligned(x_error, y_error) and abs(yaw_error) <= self.yaw_tolerance:
+                msg = (
+                    "fine tune complete: x_error=%.3f y_error=%.3f yaw_error=%.3f"
+                    % (x_error, y_error, yaw_error)
+                )
+                self.get_logger().info(msg)
+                return True, msg
+
+        x_error, y_error, yaw_error = last_errors
+        return False, (
+            "final check failed after 2 rounds: x_error=%.3f y_error=%.3f yaw_error=%.3f"
             % (x_error, y_error, yaw_error)
         )
-        self.get_logger().info(msg)
-        return True, msg
 
     def _tune_x_axis(self, deadline: float, period: float) -> tuple[bool, str]:
         while rclpy.ok() and time.monotonic() < deadline:

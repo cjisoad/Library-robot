@@ -11,6 +11,7 @@ def generate_launch_description():
     pkg_share = get_package_share_directory("robot_decision")
 
     points_file = LaunchConfiguration("points_file")
+    fine_tune_done_topic = LaunchConfiguration("fine_tune_done_topic")
 
     return LaunchDescription(
         [
@@ -18,6 +19,7 @@ def generate_launch_description():
                 "points_file",
                 default_value=os.path.join(pkg_share, "config", "points.yaml"),
             ),
+            DeclareLaunchArgument("fine_tune_done_topic", default_value="/fine_tune/done"),
             Node(
                 package="robot_decision",
                 executable="cruise_node",
@@ -26,6 +28,7 @@ def generate_launch_description():
                 parameters=[
                     {
                         "points_file": points_file,
+                        "fine_tune_done_topic": fine_tune_done_topic,
                     }
                 ],
             ),

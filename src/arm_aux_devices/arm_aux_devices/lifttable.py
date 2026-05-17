@@ -26,6 +26,7 @@ class LiftTableConfig:
     accel: int
     pulse_per_move: int
     send_interval_s: float
+    hold_on_shutdown: bool
 
 
 class LiftTableController:
@@ -65,7 +66,10 @@ class LiftTableController:
         try:
             self.stop()
             time.sleep(0.1)
-            self._write_single_register(0x0001, 0)
+            if self.config.hold_on_shutdown:
+                self.logger.info("Leaving lifttable driver enabled on shutdown to hold position.")
+            else:
+                self._write_single_register(0x0001, 0)
         finally:
             self.ser.close()
             self.ser = None
@@ -144,6 +148,7 @@ class LiftTable(Node):
         self.declare_parameter("accel", 10000)
         self.declare_parameter("pulse_per_move", 500)
         self.declare_parameter("send_interval_s", 0.01)
+        self.declare_parameter("hold_on_shutdown", True)
 
         self.controller = LiftTableController(self._config(), self.get_logger())
         self.direction = 0
@@ -171,6 +176,7 @@ class LiftTable(Node):
             accel=int(self.get_parameter("accel").value),
             pulse_per_move=int(self.get_parameter("pulse_per_move").value),
             send_interval_s=float(self.get_parameter("send_interval_s").value),
+            hold_on_shutdown=bool(self.get_parameter("hold_on_shutdown").value),
         )
 
     def _connect(self) -> bool:
