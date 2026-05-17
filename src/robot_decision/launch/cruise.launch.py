@@ -32,7 +32,7 @@ def generate_launch_description():
             Node(
                 package="robot_decision",
                 executable="point3_fine_tune_node",
-                name="point3_fine_tune_node",
+                name="fine_tune_node",
                 output="screen",
                 parameters=[
                     {

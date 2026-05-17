@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-import threading
-
 import yaml
 
 import rclpy
@@ -11,6 +9,9 @@ from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rcl_interfaces.msg import Parameter as ParameterMsg
+from rcl_interfaces.msg import ParameterType, ParameterValue
+from rcl_interfaces.srv import SetParameters
 from std_srvs.srv import Trigger
 
 from robot_decision.pose_utils import make_pose_stamped
@@ -39,20 +40,31 @@ class CruiseNode(Node):
             Trigger,
             self.fine_tune_config["start_service"],
         )
+        self.cruise_continue_service = self.create_service(
+            Trigger,
+            "~/continue",
+            self._handle_continue_cruise,
+        )
+        self.fine_tune_parameter_client = self.create_client(
+            SetParameters,
+            self.fine_tune_config["parameter_service"],
+        )
         self.current_index = 0
         self.loop_count = 1
         self._active_goal_handle = None
         self._waiting_for_terminal_continue = False
+        self._pending_continue_after_fine_tune = False
+        self._fine_tune_delay_timer = None
         self._startup_timer = self.create_timer(0.5, self._start_when_ready)
 
         self.get_logger().info(
-            "loaded %d cruise points from %s, loop=%s, fine_tune=%s target=%s"
+            "loaded %d cruise points from %s, loop=%s, fine_tune=%s trigger_mode=%s"
             % (
                 len(self.points),
                 points_file,
                 self.loop,
                 self.fine_tune_config["enabled"],
-                self.fine_tune_config["target_point"],
+                self.fine_tune_config["trigger_mode"],
             )
         )
 
@@ -103,16 +115,35 @@ class CruiseNode(Node):
             raise RuntimeError("fine_tune config must be a mapping in %s" % points_file)
 
         enabled = self._read_bool(fine_tune.get("enabled", False), "fine_tune.enabled")
-        target_point = str(fine_tune.get("target_point", "point3"))
-        start_service = str(fine_tune.get("start_service", "/point3_fine_tune/start"))
+        trigger_mode = str(fine_tune.get("trigger_mode", fine_tune.get("mode", "selected"))).strip().lower()
+        if trigger_mode not in ("all", "selected"):
+            raise RuntimeError("fine_tune.trigger_mode must be 'all' or 'selected'")
+
+        trigger_points = fine_tune.get("trigger_points", fine_tune.get("target_points", []))
+        if trigger_points is None:
+            trigger_points = []
+        if not isinstance(trigger_points, list):
+            raise RuntimeError("fine_tune.trigger_points must be a list in %s" % points_file)
+
+        start_service = str(fine_tune.get("start_service", "/fine_tune/start"))
+        parameter_service = str(
+            fine_tune.get("parameter_service", "/fine_tune_node/set_parameters")
+        )
+        settle_delay_sec = float(fine_tune.get("settle_delay_sec", 2.0))
+        if settle_delay_sec < 0.0:
+            raise RuntimeError("fine_tune.settle_delay_sec must be non-negative")
+
         wait_for_terminal_continue = self._read_bool(
             fine_tune.get("wait_for_terminal_continue", True),
             "fine_tune.wait_for_terminal_continue",
         )
         return {
             "enabled": enabled,
-            "target_point": target_point,
+            "trigger_mode": trigger_mode,
+            "trigger_points": {str(name) for name in trigger_points},
             "start_service": start_service,
+            "parameter_service": parameter_service,
+            "settle_delay_sec": settle_delay_sec,
             "wait_for_terminal_continue": wait_for_terminal_continue,
         }
 
@@ -198,17 +229,81 @@ class CruiseNode(Node):
 
         self.get_logger().info("reached %s" % point["name"])
         if self._should_fine_tune(point):
-            self._start_fine_tune(point)
+            self._schedule_fine_tune(point)
             return
 
         self.current_index += 1
         self._send_next_goal()
 
     def _should_fine_tune(self, point: dict) -> bool:
-        return (
-            self.fine_tune_config["enabled"]
-            and point["name"] == self.fine_tune_config["target_point"]
+        if not self.fine_tune_config["enabled"]:
+            return False
+        if self.fine_tune_config["trigger_mode"] == "all":
+            return True
+        return point["name"] in self.fine_tune_config["trigger_points"]
+
+    def _schedule_fine_tune(self, point: dict) -> None:
+        delay_sec = self.fine_tune_config["settle_delay_sec"]
+        self.get_logger().info(
+            "waiting %.2f s before fine tune for %s" % (delay_sec, point["name"])
         )
+        if delay_sec <= 0.0:
+            self._set_fine_tune_target(point)
+            return
+
+        self._fine_tune_delay_timer = self.create_timer(
+            delay_sec,
+            lambda point=point: self._handle_fine_tune_delay(point),
+        )
+
+    def _handle_fine_tune_delay(self, point: dict) -> None:
+        if self._fine_tune_delay_timer is not None:
+            self._fine_tune_delay_timer.cancel()
+            self._fine_tune_delay_timer = None
+        self._set_fine_tune_target(point)
+
+    def _set_fine_tune_target(self, point: dict) -> None:
+        if not self.fine_tune_parameter_client.wait_for_service(
+            timeout_sec=self.server_timeout_sec
+        ):
+            self.get_logger().error(
+                "fine tune parameter service %s is not available"
+                % self.fine_tune_config["parameter_service"]
+            )
+            rclpy.shutdown()
+            return
+
+        request = SetParameters.Request()
+        parameter = ParameterMsg()
+        parameter.name = "target_point"
+        parameter.value = ParameterValue(
+            type=ParameterType.PARAMETER_STRING,
+            string_value=point["name"],
+        )
+        request.parameters = [parameter]
+
+        self.get_logger().info("setting fine tune target to %s" % point["name"])
+        future = self.fine_tune_parameter_client.call_async(request)
+        future.add_done_callback(self._handle_set_fine_tune_target)
+
+    def _handle_set_fine_tune_target(self, future) -> None:
+        point = self.points[self.current_index]
+        try:
+            response = future.result()
+        except Exception as exc:  # pragma: no cover - runtime ROS failure path
+            self.get_logger().error("failed to set fine tune target: %s" % exc)
+            rclpy.shutdown()
+            return
+
+        if not response.results or not response.results[0].successful:
+            reason = response.results[0].reason if response.results else "no result"
+            self.get_logger().error(
+                "failed to set fine tune target to %s: %s" % (point["name"], reason)
+            )
+            rclpy.shutdown()
+            return
+
+        self._start_fine_tune(point)
 
     def _start_fine_tune(self, point: dict) -> None:
         if not self.fine_tune_client.wait_for_service(timeout_sec=self.server_timeout_sec):
@@ -244,33 +339,26 @@ class CruiseNode(Node):
             self._continue_after_fine_tune()
 
     def _wait_for_terminal_continue(self, point: dict) -> None:
-        if self._waiting_for_terminal_continue:
-            return
-
         self._waiting_for_terminal_continue = True
+        self._pending_continue_after_fine_tune = True
         self.get_logger().info(
-            "fine tune complete at %s; enter 1 in this terminal to continue cruise"
+            "fine tune complete at %s; call service /cruise_node/continue to continue cruise"
             % point["name"]
         )
-        thread = threading.Thread(target=self._terminal_continue_loop, daemon=True)
-        thread.start()
 
-    def _terminal_continue_loop(self) -> None:
-        while rclpy.ok():
-            try:
-                value = input("Enter 1 to continue cruise: ").strip()
-            except EOFError:
-                self.get_logger().error("terminal input closed while waiting to continue")
-                rclpy.shutdown()
-                return
+    def _handle_continue_cruise(self, _request, response):
+        if not self._pending_continue_after_fine_tune:
+            response.success = False
+            response.message = "no fine tune pause is pending"
+            return response
 
-            if value == "1":
-                self.get_logger().info("continue command received")
-                self._waiting_for_terminal_continue = False
-                self._continue_after_fine_tune()
-                return
-
-            self.get_logger().warn("ignored input '%s'; enter 1 to continue" % value)
+        self.get_logger().info("continue command received")
+        self._waiting_for_terminal_continue = False
+        self._pending_continue_after_fine_tune = False
+        self._continue_after_fine_tune()
+        response.success = True
+        response.message = "cruise continued"
+        return response
 
     def _continue_after_fine_tune(self) -> None:
         self.current_index += 1
