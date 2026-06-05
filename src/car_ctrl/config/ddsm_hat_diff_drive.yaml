@@ -2,10 +2,11 @@ ddsm_hat_diff_drive:
   ros__parameters:
     port: /dev/chassis_serial_port
     baudrate: 115200
+    driver_backend: ddsm_rs485
 
     # Update these two values to match the chassis geometry.
-    wheel_radius: 0.05
-    wheel_track: 0.72
+    wheel_radius: 0.05025
+    wheel_track: 0.586
 
     # Motor physical layout: 1=left front, 2=right front, 3=left rear, 4=right rear.
     # The right side is installed in the opposite direction, so forward chassis
@@ -23,7 +24,7 @@ ddsm_hat_diff_drive:
 
     max_rpm: 330
     accel_rpm_per_sec: 600.0
-    command_rate_hz: 8.0
+    command_rate_hz: 10.0
     cmd_vel_timeout: 0.5
 
     heartbeat_ms: 1000
@@ -33,6 +34,18 @@ ddsm_hat_diff_drive:
     log_serial_rx: true
     per_motor_command_gap: 0.003
     feedback_log_rate_hz: 0.0
+
+    # driver_backend=ddsm_rs485 uses the DDSM115 native 10-byte RS485 protocol.
+    # Put the DDSM Driver HAT (A) Serial Control Switch at USB and connect the
+    # host to the Type-C port marked USB before using this backend.
+    rs485_serial_timeout: 0.02
+    rs485_response_timeout: 0.08
+    rs485_set_velocity_mode: true
+    rs485_brake_on_stop: false
+    rs485_feedback_request_on_timeout: true
+    rs485_mode_command_uses_crc: false
+    rs485_log_raw_tx: false
+    rs485_log_raw_rx: false
 
 imu_driver:
   ros__parameters:
@@ -58,14 +71,12 @@ car_odometry:
 
     # Keep these consistent with the controller section.
     wheel_radius: 0.05025
-    track_width: 0.72
+    track_width: 0.586
 
     linear_scale: 1.0
     angular_scale: 1.0
-    imu_angular_velocity_scale: 1.0
-    imu_angular_velocity_bias: 0.0
     publish_rate: 50.0
-    imu_timeout: 0.6
+    imu_timeout: 0.5
     imu_error_log_period: 1.0
     enable_angle_debug: false
     debug_log_period: 0.5

@@ -12,7 +12,7 @@ install(
 )
 
 install(
-  DIRECTORY launch config maps behavior_trees
+  DIRECTORY launch config maps behavior_trees rviz
   DESTINATION share/${PROJECT_NAME}
 )
 

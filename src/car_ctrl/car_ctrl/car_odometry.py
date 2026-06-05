@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Wheel + IMU odometry node."""
+"""Wheel + IMU odometry node using the imu_car_ros2 topic interface."""
 
 import math
 import time
 from typing import List, Optional, Sequence, Tuple
 
 import rclpy
-from rclpy.executors import ExternalShutdownException
 from geometry_msgs.msg import Quaternion, TransformStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
@@ -57,8 +56,6 @@ class CarOdometry(Node):
         self.declare_parameter("wheel_radius", 0.05)
         self.declare_parameter("linear_scale", 1.0)
         self.declare_parameter("angular_scale", 1.0)
-        self.declare_parameter("imu_angular_velocity_scale", 1.0)
-        self.declare_parameter("imu_angular_velocity_bias", 0.0)
         self.declare_parameter("publish_rate", 50.0)
         self.declare_parameter("imu_timeout", 0.5)
         self.declare_parameter("imu_error_log_period", 1.0)
@@ -90,12 +87,6 @@ class CarOdometry(Node):
         self.wheel_radius = float(self.get_parameter("wheel_radius").value)
         self.linear_scale = float(self.get_parameter("linear_scale").value)
         self.angular_scale = float(self.get_parameter("angular_scale").value)
-        self.imu_angular_velocity_scale = float(
-            self.get_parameter("imu_angular_velocity_scale").value
-        )
-        self.imu_angular_velocity_bias = float(
-            self.get_parameter("imu_angular_velocity_bias").value
-        )
         publish_rate = float(self.get_parameter("publish_rate").value)
         self.imu_timeout = float(self.get_parameter("imu_timeout").value)
         self.imu_error_log_period = float(self.get_parameter("imu_error_log_period").value)
@@ -228,9 +219,7 @@ class CarOdometry(Node):
             self.latest_imu_yaw_deg = math.degrees(self.accumulated_yaw)
             angular_z = self.imu_orientation_angular_z
         elif self.use_imu_angular_velocity:
-            angular_z = (
-                float(self.latest_imu.angular_velocity.z) - self.imu_angular_velocity_bias
-            ) * self.imu_angular_velocity_scale
+            angular_z = float(self.latest_imu.angular_velocity.z)
 
         gyro_delta_theta = angular_z * dt
         self.gyro_integrated_yaw += gyro_delta_theta
@@ -263,7 +252,7 @@ class CarOdometry(Node):
         if now - self.last_imu_error_log_time < self.imu_error_log_period:
             return
         self.last_imu_error_log_time = now
-        self.get_logger().warning("IMU 无反馈或已超时，跳过本次里程计更新")
+        self.get_logger().error("IMU 无反馈或已超时，跳过本次里程计更新")
 
     def publish_debug_angle(self, stamp) -> None:
         odom_yaw_deg = math.degrees(self.accumulated_yaw)
@@ -335,7 +324,7 @@ def main(args=None) -> None:
     try:
         node = CarOdometry()
         rclpy.spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):
+    except KeyboardInterrupt:
         pass
     finally:
         if node is not None:

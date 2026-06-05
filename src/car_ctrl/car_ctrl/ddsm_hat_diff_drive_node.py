@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""ROS 2 differential drive controller for Waveshare DDSM Driver HAT (A)."""
+"""ROS 2 differential drive controller for DDSM115 four-wheel bases."""
 
 import json
 import math
+import struct
 import threading
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -52,9 +53,6 @@ class DDSMDriverHat:
         if self._serial.is_open:
             self._serial.close()
 
-    def reset_output_buffer(self) -> None:
-        self._serial.reset_output_buffer()
-
     def send(self, command: Dict[str, int], log_debug: bool = False) -> None:
         payload = json.dumps(command, separators=(",", ":")).encode("utf-8") + b"\n"
         if log_debug:
@@ -84,12 +82,172 @@ class DDSMDriverHat:
         return self._serial.readline()
 
 
+def crc8_maxim(data: bytes) -> int:
+    """CRC-8/MAXIM used by the DDSM115 binary protocol."""
+    crc = 0x00
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 0x01:
+                crc = (crc >> 1) ^ 0x8C
+            else:
+                crc >>= 1
+            crc &= 0xFF
+    return crc
+
+
+def attach_crc(frame_without_crc: bytes) -> bytes:
+    return frame_without_crc + bytes([crc8_maxim(frame_without_crc)])
+
+
+def int16_to_bytes(value: int) -> Tuple[int, int]:
+    packed = struct.pack(">h", int(value))
+    return packed[0], packed[1]
+
+
+def bytes_to_int16(high: int, low: int) -> int:
+    return struct.unpack(">h", bytes([high, low]))[0]
+
+
+class DDSM115Rs485Bus:
+    """Direct DDSM115 binary-protocol client over the HAT USB port or RS485."""
+
+    MODE_VELOCITY = 0x02
+
+    def __init__(
+        self,
+        port: str,
+        baudrate: int,
+        serial_timeout: float,
+        response_timeout: float,
+        max_rpm: int,
+        logger,
+        log_raw_tx: bool = False,
+        log_raw_rx: bool = False,
+        mode_command_uses_crc: bool = False,
+        feedback_request_on_timeout: bool = True,
+    ):
+        if serial is None:
+            raise RuntimeError("python3-serial is not installed")
+
+        self._logger = logger
+        self._serial = serial.Serial(
+            port=port,
+            baudrate=baudrate,
+            bytesize=serial.EIGHTBITS,
+            parity=serial.PARITY_NONE,
+            stopbits=serial.STOPBITS_ONE,
+            timeout=serial_timeout,
+            write_timeout=max(serial_timeout, 0.5),
+        )
+        self.response_timeout = response_timeout
+        self.max_rpm = max_rpm
+        self.log_raw_tx = log_raw_tx
+        self.log_raw_rx = log_raw_rx
+        self.mode_command_uses_crc = mode_command_uses_crc
+        self.feedback_request_on_timeout = feedback_request_on_timeout
+
+    def close(self) -> None:
+        if self._serial.is_open:
+            self._serial.close()
+
+    def set_velocity_mode(self, motor_id: int) -> None:
+        if self.mode_command_uses_crc:
+            frame = attach_crc(bytes([motor_id, 0xA0, 0, 0, 0, 0, 0, 0, self.MODE_VELOCITY]))
+        else:
+            frame = bytes([motor_id, 0xA0, 0, 0, 0, 0, 0, 0, 0, self.MODE_VELOCITY])
+        self._write_frame(frame)
+
+    def send_commands(
+        self,
+        commands: Sequence[Dict[str, int]],
+        gap_s: float,
+    ) -> List[Tuple[int, float]]:
+        feedback = []
+        for command in commands:
+            motor_id = int(command["id"])
+            rpm = max(-self.max_rpm, min(self.max_rpm, int(command["cmd"])))
+            accel = int(command.get("act", 0)) & 0xFF
+            reply = self.set_rpm(motor_id, rpm, accel)
+            if reply is None and self.feedback_request_on_timeout:
+                reply = self.request_feedback(motor_id)
+            parsed = self.parse_feedback(reply, motor_id)
+            if parsed is not None:
+                feedback.append(parsed)
+            if gap_s > 0.0:
+                time.sleep(gap_s)
+        return feedback
+
+    def set_rpm(self, motor_id: int, rpm: int, accel: int = 0) -> Optional[bytes]:
+        high, low = int16_to_bytes(rpm)
+        frame = attach_crc(bytes([motor_id, 0x64, high, low, 0, 0, accel & 0xFF, 0, 0]))
+        self._serial.reset_input_buffer()
+        self._write_frame(frame)
+        return self._read_reply(motor_id)
+
+    def brake(self, motor_id: int) -> Optional[bytes]:
+        frame = attach_crc(bytes([motor_id, 0x64, 0, 0, 0, 0, 0, 0xFF, 0]))
+        self._serial.reset_input_buffer()
+        self._write_frame(frame)
+        return self._read_reply(motor_id)
+
+    def request_feedback(self, motor_id: int) -> Optional[bytes]:
+        frame = attach_crc(bytes([motor_id, 0x74, 0, 0, 0, 0, 0, 0, 0]))
+        self._serial.reset_input_buffer()
+        self._write_frame(frame)
+        return self._read_reply(motor_id)
+
+    def parse_feedback(self, reply: Optional[bytes], expected_id: int) -> Optional[Tuple[int, float]]:
+        if reply is None or len(reply) != 10:
+            return None
+        if reply[0] != expected_id or reply[1] != self.MODE_VELOCITY:
+            return None
+        if crc8_maxim(reply[:9]) != reply[9]:
+            return None
+        rpm = float(bytes_to_int16(reply[4], reply[5]))
+        return expected_id, rpm
+
+    def _write_frame(self, frame: bytes) -> None:
+        if self.log_raw_tx:
+            self._logger.debug(f"rs485 tx: {frame.hex(' ')}")
+        self._serial.write(frame)
+        self._serial.flush()
+
+    def _read_reply(self, motor_id: int) -> Optional[bytes]:
+        deadline = time.monotonic() + self.response_timeout
+        buf = bytearray()
+        while time.monotonic() < deadline:
+            raw = self._serial.read(1)
+            if not raw:
+                continue
+            byte = raw[0]
+            if not buf:
+                if byte == motor_id:
+                    buf.append(byte)
+                continue
+            if len(buf) == 1 and byte != self.MODE_VELOCITY:
+                buf.clear()
+                if byte == motor_id:
+                    buf.append(byte)
+                continue
+            buf.append(byte)
+            if len(buf) == 10:
+                frame = bytes(buf)
+                if self.log_raw_rx:
+                    self._logger.debug(f"rs485 rx: {frame.hex(' ')}")
+                if crc8_maxim(frame[:9]) == frame[9]:
+                    return frame
+                buf.clear()
+        return None
+
+
 class DDSMHatDiffDriveNode(Node):
     def __init__(self) -> None:
         super().__init__("ddsm_hat_diff_drive")
 
         self.declare_parameter("port", "/dev/chassis_serial_port")
         self.declare_parameter("baudrate", 115200)
+        self.declare_parameter("driver_backend", "hat_json")
         self.declare_parameter("wheel_radius", 0.05)
         self.declare_parameter("wheel_track", 0.33)
         self.declare_parameter("max_rpm", 330)
@@ -112,9 +270,18 @@ class DDSMHatDiffDriveNode(Node):
         self.declare_parameter("log_serial_rx", False)
         self.declare_parameter("per_motor_command_gap", 0.003)
         self.declare_parameter("feedback_log_rate_hz", 0.0)
+        self.declare_parameter("rs485_serial_timeout", 0.02)
+        self.declare_parameter("rs485_response_timeout", 0.08)
+        self.declare_parameter("rs485_set_velocity_mode", True)
+        self.declare_parameter("rs485_brake_on_stop", False)
+        self.declare_parameter("rs485_feedback_request_on_timeout", True)
+        self.declare_parameter("rs485_mode_command_uses_crc", False)
+        self.declare_parameter("rs485_log_raw_tx", False)
+        self.declare_parameter("rs485_log_raw_rx", False)
 
         self.port = self.get_parameter("port").value
         self.baudrate = int(self.get_parameter("baudrate").value)
+        self.driver_backend = str(self.get_parameter("driver_backend").value)
         self.wheel_radius = float(self.get_parameter("wheel_radius").value)
         self.wheel_track = float(self.get_parameter("wheel_track").value)
         self.max_rpm = int(self.get_parameter("max_rpm").value)
@@ -137,6 +304,18 @@ class DDSMHatDiffDriveNode(Node):
         self.log_serial_rx = bool(self.get_parameter("log_serial_rx").value)
         self.per_motor_command_gap = float(self.get_parameter("per_motor_command_gap").value)
         self.feedback_log_rate_hz = float(self.get_parameter("feedback_log_rate_hz").value)
+        self.rs485_serial_timeout = float(self.get_parameter("rs485_serial_timeout").value)
+        self.rs485_response_timeout = float(self.get_parameter("rs485_response_timeout").value)
+        self.rs485_set_velocity_mode = bool(self.get_parameter("rs485_set_velocity_mode").value)
+        self.rs485_brake_on_stop = bool(self.get_parameter("rs485_brake_on_stop").value)
+        self.rs485_feedback_request_on_timeout = bool(
+            self.get_parameter("rs485_feedback_request_on_timeout").value
+        )
+        self.rs485_mode_command_uses_crc = bool(
+            self.get_parameter("rs485_mode_command_uses_crc").value
+        )
+        self.rs485_log_raw_tx = bool(self.get_parameter("rs485_log_raw_tx").value)
+        self.rs485_log_raw_rx = bool(self.get_parameter("rs485_log_raw_rx").value)
 
         if len(self.motor_ids) != 4 or len(self.motor_signs) != 4:
             raise RuntimeError("motor_ids and motor_signs must both contain four values")
@@ -150,16 +329,15 @@ class DDSMHatDiffDriveNode(Node):
             raise RuntimeError("per_motor_command_gap must be greater than or equal to zero")
         if self.feedback_log_rate_hz < 0.0:
             raise RuntimeError("feedback_log_rate_hz must be greater than or equal to zero")
+        if self.rs485_serial_timeout <= 0.0 or self.rs485_response_timeout <= 0.0:
+            raise RuntimeError("rs485 timeouts must be positive")
+        if self.driver_backend not in ("hat_json", "ddsm_rs485"):
+            raise RuntimeError("driver_backend must be 'hat_json' or 'ddsm_rs485'")
 
-        self._hat = DDSMDriverHat(
-            self.port,
-            self.baudrate,
-            timeout=0.1,
-            logger=self.get_logger(),
-        )
+        self._driver = self._create_driver()
 
         if self.init_hat:
-            self._initialize_hat()
+            self._initialize_driver()
 
         self._cmd_lock = threading.Lock()
         self._linear = 0.0
@@ -173,8 +351,6 @@ class DDSMHatDiffDriveNode(Node):
         self._command_lock = threading.Lock()
         self._last_commanded_rpms = {motor_id: 0 for motor_id in self.motor_ids}
         self._last_tx_time = time.monotonic()
-        self._last_tx_error_log_time = 0.0
-        self._tx_error_count = 0
         self._running = True
 
         self._wheel_speed_pub = self.create_publisher(
@@ -195,8 +371,10 @@ class DDSMHatDiffDriveNode(Node):
                 1.0 / self.feedback_log_rate_hz,
                 self._log_feedback_snapshot,
             )
-        self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
-        self._rx_thread.start()
+        self._rx_thread = None
+        if self.driver_backend == "hat_json":
+            self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
+            self._rx_thread.start()
         self._tx_thread = threading.Thread(target=self._tx_loop, daemon=True)
         self._tx_thread.start()
 
@@ -204,23 +382,52 @@ class DDSMHatDiffDriveNode(Node):
         self._running = False
         if hasattr(self, "_tx_thread") and self._tx_thread.is_alive():
             self._tx_thread.join(timeout=1.0)
-        if hasattr(self, "_rx_thread") and self._rx_thread.is_alive():
+        if self._rx_thread is not None and self._rx_thread.is_alive():
             self._rx_thread.join(timeout=1.0)
         self._send_stop()
-        if hasattr(self, "_hat"):
-            self._hat.close()
+        if hasattr(self, "_driver"):
+            self._driver.close()
         return super().destroy_node()
 
-    def _initialize_hat(self) -> None:
-        self._hat.send({"T": 11002, "type": 115}, self.log_serial_tx)
-        self._hat.flush()
-        time.sleep(0.05)
-        self._hat.send({"T": 11001, "time": self.heartbeat_ms}, self.log_serial_tx)
-        self._hat.flush()
-        time.sleep(0.05)
-        for motor_id in self.motor_ids:
-            self._hat.send({"T": 10012, "id": motor_id, "mode": 2}, self.log_serial_tx)
-        self._hat.flush()
+    def _create_driver(self):
+        if self.driver_backend == "hat_json":
+            return DDSMDriverHat(
+                self.port,
+                self.baudrate,
+                timeout=0.1,
+                logger=self.get_logger(),
+            )
+        return DDSM115Rs485Bus(
+            self.port,
+            self.baudrate,
+            serial_timeout=self.rs485_serial_timeout,
+            response_timeout=self.rs485_response_timeout,
+            max_rpm=self.max_rpm,
+            logger=self.get_logger(),
+            log_raw_tx=self.rs485_log_raw_tx,
+            log_raw_rx=self.rs485_log_raw_rx,
+            mode_command_uses_crc=self.rs485_mode_command_uses_crc,
+            feedback_request_on_timeout=self.rs485_feedback_request_on_timeout,
+        )
+
+    def _initialize_driver(self) -> None:
+        if self.driver_backend == "hat_json":
+            self._driver.send({"T": 11002, "type": 115}, self.log_serial_tx)
+            self._driver.flush()
+            time.sleep(0.05)
+            self._driver.send({"T": 11001, "time": self.heartbeat_ms}, self.log_serial_tx)
+            self._driver.flush()
+            time.sleep(0.05)
+            for motor_id in self.motor_ids:
+                self._driver.send({"T": 10012, "id": motor_id, "mode": 2}, self.log_serial_tx)
+            self._driver.flush()
+            time.sleep(0.05)
+            return
+
+        if self.rs485_set_velocity_mode:
+            for motor_id in self.motor_ids:
+                self._driver.set_velocity_mode(motor_id)
+                time.sleep(0.02)
         time.sleep(0.05)
 
     def _cmd_vel_callback(self, msg: Twist) -> None:
@@ -233,13 +440,9 @@ class DDSMHatDiffDriveNode(Node):
         period = 1.0 / self.command_rate_hz
         next_wake = time.monotonic()
         while self._running:
-            try:
-                self._update_targets_from_cmd()
-                self._ramp_current_rpms()
-                self._send_current_rpms()
-                self._tx_error_count = 0
-            except Exception as exc:
-                self._handle_tx_error(exc)
+            self._update_targets_from_cmd()
+            self._ramp_current_rpms()
+            self._send_current_rpms()
 
             next_wake += period
             sleep_s = next_wake - time.monotonic()
@@ -293,34 +496,14 @@ class DDSMHatDiffDriveNode(Node):
             }
             for motor_id in self.command_order
         ]
-        self._send_batch(commands)
         with self._command_lock:
             self._last_commanded_rpms = {
                 command["id"]: command["cmd"]
                 for command in commands
             }
+        feedback = self._send_batch(commands)
+        self._apply_feedback(feedback)
         self._publish_wheel_states()
-
-    def _handle_tx_error(self, exc: Exception) -> None:
-        self._tx_error_count += 1
-        self._target_rpms = [0.0, 0.0, 0.0, 0.0]
-        self._current_rpms = [0.0, 0.0, 0.0, 0.0]
-
-        try:
-            self._hat.reset_output_buffer()
-        except Exception as reset_exc:
-            self._log_tx_error(f"{exc}; failed to reset serial output buffer: {reset_exc}")
-            return
-
-        self._log_tx_error(str(exc))
-
-    def _log_tx_error(self, message: str) -> None:
-        now = time.monotonic()
-        if self._tx_error_count == 1 or now - self._last_tx_error_log_time >= 1.0:
-            self.get_logger().warn(
-                f"serial tx failed ({self._tx_error_count} consecutive): {message}"
-            )
-            self._last_tx_error_log_time = now
 
     def _send_stop(self) -> None:
         commands = [
@@ -333,17 +516,41 @@ class DDSMHatDiffDriveNode(Node):
                     command["id"]: command["cmd"]
                     for command in commands
                 }
-            self._send_batch(commands)
+            feedback = self._send_batch(commands)
+            self._apply_feedback(feedback)
+            if self.driver_backend == "ddsm_rs485" and self.rs485_brake_on_stop:
+                for motor_id in self.command_order:
+                    parsed = self._driver.parse_feedback(
+                        self._driver.brake(motor_id),
+                        motor_id,
+                    )
+                    if parsed is not None:
+                        self._apply_feedback([parsed])
             self._current_rpms = [0.0, 0.0, 0.0, 0.0]
             self._target_rpms = [0.0, 0.0, 0.0, 0.0]
             self._publish_wheel_states()
         except Exception as exc:  # pragma: no cover - shutdown best effort
             self.get_logger().warn(f"failed to stop motors during shutdown: {exc}")
 
-    def _send_batch(self, commands: List[Dict[str, int]]) -> None:
+    def _send_batch(self, commands: List[Dict[str, int]]) -> List[Tuple[int, float]]:
         # HAT 固件在一次写入多条 JSON 时可能只返回最后一条命令的反馈。
         # 逐个电机发送并留出极短间隔，便于读取 1/2/3/4 四个电机的返回转速。
-        self._hat.send_commands(commands, self.per_motor_command_gap, self.log_serial_tx)
+        if self.driver_backend == "hat_json":
+            self._driver.send_commands(commands, self.per_motor_command_gap, self.log_serial_tx)
+            return []
+        return self._driver.send_commands(commands, self.per_motor_command_gap)
+
+    def _apply_feedback(self, feedback: Sequence[Tuple[int, float]]) -> None:
+        if not feedback:
+            return
+        now = time.monotonic()
+        with self._feedback_lock:
+            for motor_id, rpm in feedback:
+                if motor_id not in self.motor_ids:
+                    continue
+                index = self.motor_ids.index(motor_id)
+                self._feedback_rpms[index] = rpm
+                self._feedback_times[index] = now
 
     def _clamp_rpm(self, rpm: float) -> float:
         return max(-self.max_rpm, min(self.max_rpm, rpm))
@@ -400,7 +607,7 @@ class DDSMHatDiffDriveNode(Node):
     def _rx_loop(self) -> None:
         while self._running and rclpy.ok():
             try:
-                raw = self._hat.readline()
+                raw = self._driver.readline()
             except Exception as exc:
                 if self._running:
                     self.get_logger().warn(f"serial rx failed: {exc}")
@@ -499,13 +706,15 @@ class DDSMHatDiffDriveNode(Node):
 
 def main(args: Optional[List[str]] = None) -> None:
     rclpy.init(args=args)
-    node = DDSMHatDiffDriveNode()
+    node = None
     try:
+        node = DDSMHatDiffDriveNode()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
+        if node is not None:
+            node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 

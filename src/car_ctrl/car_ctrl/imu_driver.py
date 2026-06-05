@@ -47,7 +47,7 @@ class WitImuDriver(Node):
     def __init__(self) -> None:
         super().__init__("imu_driver")
 
-        # 串口参数名保持兼容，便于沿用已有配置。
+        # 串口参数名和参考 imu_car_ros2 保持一致。
         self.declare_parameter("imu_port", SERIAL_PORT)
         self.declare_parameter("imu_baud_rate", BAUD_RATE)
         self.declare_parameter("imu_topic", "/imu/data_raw")
@@ -195,16 +195,19 @@ class WitImuDriver(Node):
 
 def main(args=None) -> None:
     rclpy.init(args=args)
-    node = WitImuDriver()
+    node = None
 
     try:
+        node = WitImuDriver()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        node.close_serial()
-        node.destroy_node()
-        rclpy.shutdown()
+        if node is not None:
+            node.close_serial()
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
