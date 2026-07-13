@@ -237,3 +237,38 @@ ros2 lifecycle get /bt_navigator
 - 底盘是否订阅 `/cmd_vel`
 - `/scan` 的 frame 是否能正确变换到 `base_link`
 - 是否已经在 RViz 中设置初始位姿
+
+## 自主探索建图
+
+自主探索使用 `explore_lite` 从 Nav2 全局代价地图中选择未知区域边界，
+再通过 Nav2 的 `NavigateToPose` 动作行驶。该模式使用在线
+`slam_toolbox` 地图，不会启动 AMCL 或静态地图服务器。
+
+先在安全测试区域启动 SLAM 和 Nav2，但不让机器人移动：
+
+```bash
+source install/setup.bash
+ros2 launch mobile_robot_nav_bringup autonomous_exploration.launch.py
+```
+
+确认 TF、`/scan`、`/map`、`/global_costmap/costmap` 和
+`/navigate_to_pose` 正常后，再明确开启探索：
+
+```bash
+ros2 launch mobile_robot_nav_bringup autonomous_exploration.launch.py start_exploration:=true
+```
+
+探索节点默认延迟 5 秒创建，以等待 SLAM 和 Nav2 生命周期节点激活；可用
+`exploration_start_delay_sec:=10.0` 增加等待时间。
+
+运行时可暂停或恢复探索；暂停会取消当前导航目标，不会绕过现有的
+`collision_monitor` 速度安全链：
+
+```bash
+ros2 topic pub --once /explore/resume std_msgs/msg/Bool "{data: false}"
+ros2 topic pub --once /explore/resume std_msgs/msg/Bool "{data: true}"
+ros2 topic echo /explore/status
+```
+
+参数位于 `config/exploration_params.yaml`。默认不会在探索结束时返回起点；
+只有在地图、定位和回程路径均已验证时，才将 `return_to_init` 设为 `true`。

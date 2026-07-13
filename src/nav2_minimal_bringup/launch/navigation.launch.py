@@ -29,6 +29,7 @@ def generate_launch_description():
     params_file = LaunchConfiguration("params_file")
     use_sim_time = LaunchConfiguration("use_sim_time")
     autostart = LaunchConfiguration("autostart")
+    start_localization = LaunchConfiguration("start_localization")
     navigation_autostart = LaunchConfiguration("navigation_autostart")
     startup_navigation_on_initial_pose = LaunchConfiguration("startup_navigation_on_initial_pose")
     use_composition = LaunchConfiguration("use_composition")
@@ -74,6 +75,11 @@ def generate_launch_description():
     )
     declare_autostart_cmd = DeclareLaunchArgument(
         "autostart", default_value="true", description="Automatically startup the nav2 stack"
+    )
+    declare_start_localization_cmd = DeclareLaunchArgument(
+        "start_localization",
+        default_value="true",
+        description="Start AMCL and the static-map server. Disable when SLAM publishes /map.",
     )
     declare_navigation_autostart_cmd = DeclareLaunchArgument(
         "navigation_autostart",
@@ -135,6 +141,7 @@ def generate_launch_description():
             "container_name": NAV2_CONTAINER_NAME,
             "log_level": log_level,
         }.items(),
+        condition=IfCondition(start_localization),
     )
 
     nav2_container = Node(
@@ -365,6 +372,7 @@ def generate_launch_description():
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_params_file_cmd)
     ld.add_action(declare_autostart_cmd)
+    ld.add_action(declare_start_localization_cmd)
     ld.add_action(declare_navigation_autostart_cmd)
     ld.add_action(declare_startup_navigation_on_initial_pose_cmd)
     ld.add_action(declare_use_composition_cmd)
