@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -8,9 +9,14 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
+def _workspace_file(*relative_path: str) -> str:
+    pkg_share = Path(get_package_share_directory('mobile_robot_nav_bringup'))
+    workspace_root = pkg_share.parents[3]
+    return str(workspace_root.joinpath(*relative_path))
+
+
 def generate_launch_description():
     pkg_share = get_package_share_directory('mobile_robot_nav_bringup')
-    slam_toolbox_share = get_package_share_directory('slam_toolbox')
     lidar_params_default = os.path.join(
         get_package_share_directory('lslidar_driver'),
         'params',
@@ -64,7 +70,7 @@ def generate_launch_description():
         name='base_to_laser_tf',
         output='screen',
         arguments=[
-            '--x', '0.295',
+            '--x', '0.26',
             '--y', '0.0',
             '--z', '0.0',
             '--roll', '0.0',
@@ -117,7 +123,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'rviz_config',
-            default_value=os.path.join(slam_toolbox_share, 'config', 'slam_toolbox_default.rviz'),
+            default_value=_workspace_file('config', 'slam_tool.rviz'),
             description='Full path to the RViz config file.',
         ),
         slam_node,

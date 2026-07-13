@@ -14,7 +14,6 @@
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess
 from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode
 
@@ -39,7 +38,7 @@ def generate_launch_description():
         name='base_to_front_laser_tf',
         output='screen',
         arguments=[
-            '--x', '0.295',
+            '--x', '0.26',
             '--y', '0.0',
             '--z', '0.0',
             '--roll', '0.0',
@@ -56,12 +55,12 @@ def generate_launch_description():
         name='base_to_back_laser_tf',
         output='screen',
         arguments=[
-            '--x', '-0.28',
-            '--y', '-0.28',
+            '--x', '-0.26',
+            '--y', '0.0',
             '--z', '0.0',
             '--roll', '0.0',
-            '--pitch', '0.0',
-            '--yaw', '-0.78539816339',
+            '--pitch', '-3.14',
+            '--yaw', '0.78539816339',
             '--frame-id', 'base_link',
             '--child-frame-id', 'laser_link_b',
         ],

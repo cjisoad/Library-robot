@@ -16,19 +16,13 @@ NAV2_CONTAINER_NAME = "nav2_container"
 
 
 def _default_map_yaml(pkg_share: str) -> str:
-    pkg_share_path = Path(pkg_share)
-    workspace_root = pkg_share_path.parents[3]
-    workspace_map = workspace_root / "maps" / "awesome_map.yaml"
-    if workspace_map.is_file():
-        return str(workspace_map)
-    return str(pkg_share_path / "maps" / "awesome_map.yaml")
+    return str(Path(pkg_share) / "maps" / "302lab.yaml")
 
 
 def generate_launch_description():
     pkg_share = get_package_share_directory("mobile_robot_nav_bringup")
     nav2_bringup_share = get_package_share_directory("nav2_bringup")
     behavior_tree_dir = os.path.join(pkg_share, "behavior_trees")
-    default_map_yaml = _default_map_yaml(pkg_share)
 
     namespace = LaunchConfiguration("namespace")
     map_yaml = LaunchConfiguration("map")
@@ -47,7 +41,7 @@ def generate_launch_description():
         source_file=params_file,
         replacements={
             "/home/boreas/robot_nav/src/nav2_minimal_bringup/behavior_trees": behavior_tree_dir,
-            "/home/boreas/robot_nav/src/maps/my_map.yaml": default_map_yaml,
+            "/home/boreas/robot_nav/src/maps/my_map.yaml": map_yaml,
         },
     )
     configured_params = ParameterFile(

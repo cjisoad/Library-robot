@@ -98,7 +98,7 @@ def generate_launch_description():
         output="screen",
         arguments=[
             "--x",
-            "0.295",
+            "0.26",
             "--y",
             "0.0",
             "--z",

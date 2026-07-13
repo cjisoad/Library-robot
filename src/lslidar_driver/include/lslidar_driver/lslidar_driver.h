@@ -148,7 +148,7 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_pub;
 	rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr difop_switch;
-    LSIOSR * serial_;
+    LSIOSR * serial_ = nullptr;
 };
 typedef PointXYZIT VPoint;
 typedef pcl::PointCloud<VPoint> VPointCloud;

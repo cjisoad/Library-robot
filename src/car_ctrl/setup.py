@@ -27,6 +27,7 @@ setup(
             "ddsm_hat_motor_test = car_ctrl.ddsm_hat_motor_test_node:main",
             "imu_driver = car_ctrl.imu_driver:main",
             "car_odometry = car_ctrl.car_odometry:main",
+            "map_pose_recorder = car_ctrl.map_pose_recorder:main",
         ],
     },
 )

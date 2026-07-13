@@ -55,6 +55,8 @@ namespace lslidar_driver
 			delete pubscan_thread_;
 			pubscan_thread_ = nullptr;
 		}
+		delete serial_;
+		serial_ = nullptr;
 	}
 
 	bool LslidarDriver::loadParameters()

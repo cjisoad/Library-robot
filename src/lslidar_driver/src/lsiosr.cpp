@@ -12,8 +12,7 @@ namespace lslidar_driver {
 
 LSIOSR * LSIOSR::instance(std::string name, int speed, int fd)
 {
-  static LSIOSR obj(name, speed, fd);
-  return &obj;
+  return new LSIOSR(name, speed, fd);
 }
 
 LSIOSR::LSIOSR(std::string port, int baud_rate, int fd):port_(port), baud_rate_(baud_rate), fd_(fd)

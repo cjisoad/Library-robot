@@ -11,12 +11,7 @@ from pathlib import Path
 
 
 def _default_map_yaml(pkg_share: str) -> str:
-    pkg_share_path = Path(pkg_share)
-    workspace_root = pkg_share_path.parents[3]
-    workspace_map = workspace_root / "maps" / "awesome_map.yaml"
-    if workspace_map.is_file():
-        return str(workspace_map)
-    return str(pkg_share_path / "maps" / "awesome_map.yaml")
+    return str(Path(pkg_share) / "maps" / "302lab.yaml")
 
 
 def _package_file(package_name: str, *relative_path: str) -> str:
@@ -96,7 +91,7 @@ def generate_launch_description():
         output="screen",
         arguments=[
             "--x",
-            "0.295",
+            "0.26",
             "--y",
             "0.0",
             "--z",
@@ -121,17 +116,17 @@ def generate_launch_description():
         output="screen",
         arguments=[
             "--x",
-            "-0.28",
+            "-0.26",
             "--y",
-            "-0.28",
+            "0.0",
             "--z",
             "0.0",
             "--roll",
             "0.0",
             "--pitch",
-            "0.0",
+            "-3.14",
             "--yaw",
-            "-0.78539816339",
+            "0.78539816339",
             "--frame-id",
             "base_link",
             "--child-frame-id",
