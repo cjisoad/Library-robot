@@ -38,7 +38,7 @@ def generate_launch_description():
         launch_arguments={
             'use_sim_time': use_sim_time,
             'params_file': nav2_params_file,
-            'autostart': 'true',
+            'navigation_autostart': 'true',
         }.items(),
     )
     exploration = Node(

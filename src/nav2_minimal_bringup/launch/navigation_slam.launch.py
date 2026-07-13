@@ -15,7 +15,7 @@ def generate_launch_description():
     params_file = LaunchConfiguration('params_file')
     use_composition = LaunchConfiguration('use_composition')
     use_respawn = LaunchConfiguration('use_respawn')
-    autostart = LaunchConfiguration('autostart')
+    navigation_autostart = LaunchConfiguration('navigation_autostart')
     log_level = LaunchConfiguration('log_level')
 
     navigation = IncludeLaunchDescription(
@@ -27,7 +27,7 @@ def generate_launch_description():
             'use_sim_time': use_sim_time,
             'autostart': 'false',
             'start_localization': 'false',
-            'navigation_autostart': autostart,
+            'navigation_autostart': navigation_autostart,
             'startup_navigation_on_initial_pose': 'false',
             'use_composition': use_composition,
             'use_respawn': use_respawn,
@@ -47,7 +47,7 @@ def generate_launch_description():
             description='Full path to the Nav2 parameters file.',
         ),
         DeclareLaunchArgument(
-            'autostart', default_value='true',
+            'navigation_autostart', default_value='true',
             description='Automatically activate navigation lifecycle nodes.',
         ),
         DeclareLaunchArgument(
