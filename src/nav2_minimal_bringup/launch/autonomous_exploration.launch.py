@@ -19,6 +19,7 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration('use_rviz')
     rviz_config = LaunchConfiguration('rviz_config')
     start_exploration = LaunchConfiguration('start_exploration')
+    navigation_start_delay_sec = LaunchConfiguration('navigation_start_delay_sec')
     exploration_start_delay_sec = LaunchConfiguration('exploration_start_delay_sec')
 
     mapping = IncludeLaunchDescription(
@@ -53,6 +54,10 @@ def generate_launch_description():
         ],
         remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
     )
+    delayed_navigation = TimerAction(
+        period=navigation_start_delay_sec,
+        actions=[navigation],
+    )
     delayed_exploration = TimerAction(
         period=exploration_start_delay_sec,
         actions=[exploration],
@@ -78,8 +83,12 @@ def generate_launch_description():
             description='Start frontier exploration. Keep false until the robot is in a safe test area.',
         ),
         DeclareLaunchArgument(
-            'exploration_start_delay_sec', default_value='5.0',
-            description='Wait for SLAM and Nav2 before creating the exploration node.',
+            'navigation_start_delay_sec', default_value='8.0',
+            description='Wait for chassis, lidar, and SLAM initialization before starting Nav2.',
+        ),
+        DeclareLaunchArgument(
+            'exploration_start_delay_sec', default_value='15.0',
+            description='Wait for SLAM and delayed Nav2 startup before creating the exploration node.',
         ),
         DeclareLaunchArgument(
             'use_rviz', default_value='true', description='Start mapping RViz.',
@@ -90,6 +99,6 @@ def generate_launch_description():
             description='Full path to the RViz configuration file.',
         ),
         mapping,
-        navigation,
+        delayed_navigation,
         delayed_exploration,
     ])

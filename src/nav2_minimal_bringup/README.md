@@ -258,8 +258,9 @@ ros2 launch mobile_robot_nav_bringup autonomous_exploration.launch.py
 ros2 launch mobile_robot_nav_bringup autonomous_exploration.launch.py start_exploration:=true
 ```
 
-探索节点默认延迟 5 秒创建，以等待 SLAM 和 Nav2 生命周期节点激活；可用
-`exploration_start_delay_sec:=10.0` 增加等待时间。
+Nav2 默认在底盘、雷达和 SLAM 启动 8 秒后创建，探索节点默认在 15 秒后创建，
+以避免启动阶段资源争用。可用 `navigation_start_delay_sec` 和
+`exploration_start_delay_sec` 增加等待时间。
 
 运行时可暂停或恢复探索；暂停会取消当前导航目标，不会绕过现有的
 `collision_monitor` 速度安全链：
