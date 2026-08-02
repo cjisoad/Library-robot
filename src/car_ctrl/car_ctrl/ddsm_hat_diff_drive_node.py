@@ -278,6 +278,8 @@ class DDSMHatDiffDriveNode(Node):
         self.declare_parameter("rs485_mode_command_uses_crc", False)
         self.declare_parameter("rs485_log_raw_tx", False)
         self.declare_parameter("rs485_log_raw_rx", False)
+        self.declare_parameter("serial_reconnect_period", 1.0)
+        self.declare_parameter("feedback_health_timeout", 2.0)
 
         self.port = self.get_parameter("port").value
         self.baudrate = int(self.get_parameter("baudrate").value)
@@ -316,6 +318,12 @@ class DDSMHatDiffDriveNode(Node):
         )
         self.rs485_log_raw_tx = bool(self.get_parameter("rs485_log_raw_tx").value)
         self.rs485_log_raw_rx = bool(self.get_parameter("rs485_log_raw_rx").value)
+        self.serial_reconnect_period = float(
+            self.get_parameter("serial_reconnect_period").value
+        )
+        self.feedback_health_timeout = float(
+            self.get_parameter("feedback_health_timeout").value
+        )
 
         if len(self.motor_ids) != 4 or len(self.motor_signs) != 4:
             raise RuntimeError("motor_ids and motor_signs must both contain four values")
@@ -331,13 +339,12 @@ class DDSMHatDiffDriveNode(Node):
             raise RuntimeError("feedback_log_rate_hz must be greater than or equal to zero")
         if self.rs485_serial_timeout <= 0.0 or self.rs485_response_timeout <= 0.0:
             raise RuntimeError("rs485 timeouts must be positive")
+        if self.serial_reconnect_period <= 0.0:
+            raise RuntimeError("serial_reconnect_period must be positive")
+        if self.feedback_health_timeout <= 0.0:
+            raise RuntimeError("feedback_health_timeout must be positive")
         if self.driver_backend not in ("hat_json", "ddsm_rs485"):
             raise RuntimeError("driver_backend must be 'hat_json' or 'ddsm_rs485'")
-
-        self._driver = self._create_driver()
-
-        if self.init_hat:
-            self._initialize_driver()
 
         self._cmd_lock = threading.Lock()
         self._linear = 0.0
@@ -352,6 +359,10 @@ class DDSMHatDiffDriveNode(Node):
         self._last_commanded_rpms = {motor_id: 0 for motor_id in self.motor_ids}
         self._last_tx_time = time.monotonic()
         self._running = True
+        self._driver_lock = threading.Lock()
+        self._driver = None
+        self._last_reconnect_attempt = float("-inf")
+        self._feedback_recovery_started_at = time.monotonic()
 
         self._wheel_speed_pub = self.create_publisher(
             Float32MultiArray, self.wheel_speed_topic, 10
@@ -371,6 +382,9 @@ class DDSMHatDiffDriveNode(Node):
                 1.0 / self.feedback_log_rate_hz,
                 self._log_feedback_snapshot,
             )
+        # A transient USB/serial outage must not kill the command thread.  The
+        # loop below keeps attempting to reopen the stable udev device alias.
+        self._attempt_driver_reconnect(force=True)
         self._rx_thread = None
         if self.driver_backend == "hat_json":
             self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
@@ -386,7 +400,7 @@ class DDSMHatDiffDriveNode(Node):
             self._rx_thread.join(timeout=1.0)
         self._send_stop()
         if hasattr(self, "_driver"):
-            self._driver.close()
+            self._close_driver()
         return super().destroy_node()
 
     def _create_driver(self):
@@ -410,25 +424,102 @@ class DDSMHatDiffDriveNode(Node):
             feedback_request_on_timeout=self.rs485_feedback_request_on_timeout,
         )
 
-    def _initialize_driver(self) -> None:
+    def _initialize_driver(self, driver) -> None:
         if self.driver_backend == "hat_json":
-            self._driver.send({"T": 11002, "type": 115}, self.log_serial_tx)
-            self._driver.flush()
+            driver.send({"T": 11002, "type": 115}, self.log_serial_tx)
+            driver.flush()
             time.sleep(0.05)
-            self._driver.send({"T": 11001, "time": self.heartbeat_ms}, self.log_serial_tx)
-            self._driver.flush()
+            driver.send({"T": 11001, "time": self.heartbeat_ms}, self.log_serial_tx)
+            driver.flush()
             time.sleep(0.05)
             for motor_id in self.motor_ids:
-                self._driver.send({"T": 10012, "id": motor_id, "mode": 2}, self.log_serial_tx)
-            self._driver.flush()
+                driver.send({"T": 10012, "id": motor_id, "mode": 2}, self.log_serial_tx)
+            driver.flush()
             time.sleep(0.05)
             return
 
         if self.rs485_set_velocity_mode:
             for motor_id in self.motor_ids:
-                self._driver.set_velocity_mode(motor_id)
+                driver.set_velocity_mode(motor_id)
                 time.sleep(0.02)
         time.sleep(0.05)
+
+    def _attempt_driver_reconnect(self, force: bool = False) -> bool:
+        """Open the motor bus again after a transient serial failure."""
+        now = time.monotonic()
+        with self._driver_lock:
+            if self._driver is not None:
+                return True
+            if not force and now - self._last_reconnect_attempt < self.serial_reconnect_period:
+                return False
+            self._last_reconnect_attempt = now
+
+        driver = None
+        try:
+            driver = self._create_driver()
+            if self.init_hat:
+                self._initialize_driver(driver)
+        except Exception as exc:
+            if driver is not None:
+                try:
+                    driver.close()
+                except Exception:
+                    pass
+            self.get_logger().warn(f"motor serial reconnect failed: {exc}")
+            return False
+
+        with self._driver_lock:
+            # The transmit loop is the only reconnect owner, but retain this
+            # guard so a future callback cannot leak a second open handle.
+            if self._driver is None:
+                self._driver = driver
+                driver = None
+
+        if driver is not None:
+            driver.close()
+            return True
+
+        self._clear_feedback()
+        self._feedback_recovery_started_at = time.monotonic()
+        self.get_logger().info(f"motor serial connected: {self.port}")
+        return True
+
+    def _mark_driver_unavailable(self, error: Exception) -> None:
+        """Fail safe on I/O errors and let the transmit loop reconnect later."""
+        with self._driver_lock:
+            driver = self._driver
+            self._driver = None
+        if driver is not None:
+            try:
+                driver.close()
+            except Exception:
+                pass
+
+        self._current_rpms = [0.0, 0.0, 0.0, 0.0]
+        self._target_rpms = [0.0, 0.0, 0.0, 0.0]
+        # Do not resume a stale manual or Nav2 velocity when the bus returns.
+        # A controller must publish a fresh command after recovery.
+        with self._cmd_lock:
+            self._linear = 0.0
+            self._angular = 0.0
+        self._clear_feedback()
+        self._feedback_recovery_started_at = time.monotonic()
+        self.get_logger().error(f"motor serial failed; outputs stopped and reconnect scheduled: {error}")
+
+    def _close_driver(self) -> None:
+        with self._driver_lock:
+            driver = self._driver
+            self._driver = None
+        if driver is not None:
+            try:
+                driver.close()
+            except Exception as exc:  # pragma: no cover - shutdown best effort
+                self.get_logger().warn(f"failed to close motor serial: {exc}")
+
+    def _clear_feedback(self) -> None:
+        with self._feedback_lock:
+            self._feedback_rpms = [None, None, None, None]
+            self._feedback_times = [0.0, 0.0, 0.0, 0.0]
 
     def _cmd_vel_callback(self, msg: Twist) -> None:
         with self._cmd_lock:
@@ -440,9 +531,15 @@ class DDSMHatDiffDriveNode(Node):
         period = 1.0 / self.command_rate_hz
         next_wake = time.monotonic()
         while self._running:
-            self._update_targets_from_cmd()
-            self._ramp_current_rpms()
-            self._send_current_rpms()
+            try:
+                if self._attempt_driver_reconnect():
+                    self._update_targets_from_cmd()
+                    self._ramp_current_rpms()
+                    self._send_current_rpms()
+            except Exception as exc:
+                # Never allow a serial exception to silently terminate this
+                # background thread: that leaves /odom publishing stale data.
+                self._mark_driver_unavailable(exc)
 
             next_wake += period
             sleep_s = next_wake - time.monotonic()
@@ -503,6 +600,10 @@ class DDSMHatDiffDriveNode(Node):
             }
         feedback = self._send_batch(commands)
         self._apply_feedback(feedback)
+        if self._feedback_is_unhealthy():
+            raise RuntimeError(
+                f"no valid wheel feedback for {self.feedback_health_timeout:.1f} seconds"
+            )
         self._publish_wheel_states()
 
     def _send_stop(self) -> None:
@@ -535,10 +636,14 @@ class DDSMHatDiffDriveNode(Node):
     def _send_batch(self, commands: List[Dict[str, int]]) -> List[Tuple[int, float]]:
         # HAT 固件在一次写入多条 JSON 时可能只返回最后一条命令的反馈。
         # 逐个电机发送并留出极短间隔，便于读取 1/2/3/4 四个电机的返回转速。
+        with self._driver_lock:
+            driver = self._driver
+        if driver is None:
+            raise RuntimeError("motor serial is disconnected")
         if self.driver_backend == "hat_json":
-            self._driver.send_commands(commands, self.per_motor_command_gap, self.log_serial_tx)
+            driver.send_commands(commands, self.per_motor_command_gap, self.log_serial_tx)
             return []
-        return self._driver.send_commands(commands, self.per_motor_command_gap)
+        return driver.send_commands(commands, self.per_motor_command_gap)
 
     def _apply_feedback(self, feedback: Sequence[Tuple[int, float]]) -> None:
         if not feedback:
@@ -551,6 +656,24 @@ class DDSMHatDiffDriveNode(Node):
                 index = self.motor_ids.index(motor_id)
                 self._feedback_rpms[index] = rpm
                 self._feedback_times[index] = now
+
+    def _feedback_is_unhealthy(self) -> bool:
+        """Require fresh encoder feedback before trusting motion telemetry."""
+        if not self.use_motor_feedback or self.driver_backend != "ddsm_rs485":
+            return False
+        # DDSM115 does not necessarily reply while all wheels are stopped.
+        # Treat missing feedback as a fault only when a non-zero command is
+        # actually being sent; stationary odometry is safely zero either way.
+        if not any(abs(rpm) >= 1.0 for rpm in self._current_rpms):
+            return False
+        now = time.monotonic()
+        if now - self._feedback_recovery_started_at < self.feedback_health_timeout:
+            return False
+        with self._feedback_lock:
+            return any(
+                rpm is None or now - received_at > self.feedback_health_timeout
+                for rpm, received_at in zip(self._feedback_rpms, self._feedback_times)
+            )
 
     def _clamp_rpm(self, rpm: float) -> float:
         return max(-self.max_rpm, min(self.max_rpm, rpm))
@@ -565,8 +688,8 @@ class DDSMHatDiffDriveNode(Node):
             feedback_times = list(self._feedback_times)
 
         for index, (command_rpm, sign) in enumerate(zip(self._current_rpms, self.motor_signs)):
-            rpm_source = command_rpm
-            source = "command_fallback"
+            rpm_source = 0.0
+            source = "feedback_unavailable" if self.use_motor_feedback else "command_fallback"
             if (
                 self.use_motor_feedback
                 and feedback_rpms[index] is not None
@@ -574,6 +697,8 @@ class DDSMHatDiffDriveNode(Node):
             ):
                 rpm_source = feedback_rpms[index]
                 source = "feedback"
+            elif not self.use_motor_feedback:
+                rpm_source = command_rpm
             physical_rpm = rpm_source / sign if sign != 0 else 0.0
             speeds.append(physical_rpm * circumference / 60.0)
             sources.append(source)
@@ -606,12 +731,17 @@ class DDSMHatDiffDriveNode(Node):
 
     def _rx_loop(self) -> None:
         while self._running and rclpy.ok():
+            with self._driver_lock:
+                driver = self._driver
+            if driver is None:
+                time.sleep(0.05)
+                continue
             try:
-                raw = self._driver.readline()
+                raw = driver.readline()
             except Exception as exc:
                 if self._running:
-                    self.get_logger().warn(f"serial rx failed: {exc}")
-                return
+                    self._mark_driver_unavailable(exc)
+                continue
 
             if not raw:
                 continue

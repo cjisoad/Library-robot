@@ -29,6 +29,7 @@ Library-robot/
 | `mobile_robot_cartographer_bringup` | Cartographer 实车建图和地图保存。 |
 | `mobile_robot_voice_interaction` | 语音模块命令读取、命令码映射和播报触发。 |
 | `mobile_robot_nav_bringup` | 位于 `src/nav2_minimal_bringup/`，提供 Nav2 导航、slam_toolbox 建图和整车一键启动。 |
+| `robot_decision` | 巡航、定位初始化及 Edge Gateway；将中心 MQTT 指令安全转换为本机 Nav2 目标。 |
 
 ## 依赖和编译方式
 
@@ -38,6 +39,8 @@ Library-robot/
 - ROS 2 Jazzy
 - `python3-colcon-common-extensions`
 - `python3-serial`
+- `python3-paho-mqtt`
+- `python3-yaml`
 - `libpcap-dev`
 - `libpcl-dev`
 - `ros-jazzy-navigation2`
@@ -53,6 +56,8 @@ sudo apt update
 sudo apt install -y \
   python3-colcon-common-extensions \
   python3-serial \
+  python3-paho-mqtt \
+  python3-yaml \
   libpcap-dev \
   libpcl-dev \
   ros-jazzy-navigation2 \
@@ -143,6 +148,14 @@ ros2 launch arm_aux_devices turntable.launch.py
 ```bash
 ros2 launch arm_aux_devices lifttable.launch.py
 ```
+
+启动中心控制 Edge Gateway（必须先启动定位和 Nav2）：
+
+```bash
+ros2 launch robot_decision edge_gateway.launch.py
+```
+
+真机 MQTT、地图白名单与安全联调说明见 [src/robot_decision/README.zh-CN.md](src/robot_decision/README.zh-CN.md)。
 
 导航和建图的详细说明见：
 

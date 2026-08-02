@@ -28,13 +28,6 @@ def generate_launch_description():
         ),
         Node(
             package="car_ctrl",
-            executable="imu_driver",
-            name="imu_driver",
-            output="screen",
-            parameters=[config_file],
-        ),
-        Node(
-            package="car_ctrl",
             executable="car_odometry",
             name="car_odometry",
             output="screen",

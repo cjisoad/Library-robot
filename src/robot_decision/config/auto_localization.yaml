@@ -1,0 +1,18 @@
+auto_localization_node:
+  ros__parameters:
+    # Keep this map ID aligned with edge_gateway.yaml and the map loaded by Nav2.
+    active_map_id: "MAP-F18C1F27DC2E"
+    state_file: "/home/boreas/.local/state/lr-robot/last_localization.json"
+    pose_topic: "/amcl_pose"
+    initial_pose_topic: "/initialpose"
+    status_topic: "/localization/status"
+    set_initial_pose_service: "/set_initial_pose"
+    global_localization_service: "/reinitialize_global_localization"
+    nomotion_update_service: "/request_nomotion_update"
+    max_saved_pose_age_seconds: 604800.0
+    initialization_timeout_seconds: 30.0
+    min_stable_samples: 3
+    max_position_variance: 0.5
+    max_yaw_variance: 0.35
+    pose_stale_timeout_seconds: 5.0
+    nomotion_update_period_seconds: 1.0

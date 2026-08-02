@@ -44,6 +44,7 @@ class CarOdometry(Node):
         self.declare_parameter("wheel_speed_topic", "/wheel_speeds")
         self.declare_parameter("joint_state_topic", "/wheel_joint_states")
         self.declare_parameter("imu_topic", "/imu/data_raw")
+        self.declare_parameter("scan_odom_topic", "/scan_odom")
         self.declare_parameter("odom_topic", "/odom")
         self.declare_parameter("odom_frame", "odom")
         self.declare_parameter("base_frame", "base_link")
@@ -57,6 +58,11 @@ class CarOdometry(Node):
         self.declare_parameter("linear_scale", 1.0)
         self.declare_parameter("angular_scale", 1.0)
         self.declare_parameter("publish_rate", 50.0)
+        self.declare_parameter("wheel_speed_timeout", 0.5)
+        self.declare_parameter("wheel_speed_error_log_period", 30.0)
+        self.declare_parameter("use_scan_odometry", True)
+        self.declare_parameter("scan_odom_timeout", 0.5)
+        self.declare_parameter("scan_odom_stale_log_period", 30.0)
         self.declare_parameter("imu_timeout", 0.5)
         self.declare_parameter("imu_error_log_period", 1.0)
         self.declare_parameter("enable_angle_debug", False)
@@ -72,6 +78,7 @@ class CarOdometry(Node):
         wheel_speed_topic = self.get_parameter("wheel_speed_topic").value
         joint_state_topic = self.get_parameter("joint_state_topic").value
         imu_topic = self.get_parameter("imu_topic").value
+        scan_odom_topic = self.get_parameter("scan_odom_topic").value
         odom_topic = self.get_parameter("odom_topic").value
 
         self.odom_frame = self.get_parameter("odom_frame").value
@@ -88,6 +95,15 @@ class CarOdometry(Node):
         self.linear_scale = float(self.get_parameter("linear_scale").value)
         self.angular_scale = float(self.get_parameter("angular_scale").value)
         publish_rate = float(self.get_parameter("publish_rate").value)
+        self.wheel_speed_timeout = float(self.get_parameter("wheel_speed_timeout").value)
+        self.wheel_speed_error_log_period = float(
+            self.get_parameter("wheel_speed_error_log_period").value
+        )
+        self.use_scan_odometry = bool(self.get_parameter("use_scan_odometry").value)
+        self.scan_odom_timeout = float(self.get_parameter("scan_odom_timeout").value)
+        self.scan_odom_stale_log_period = float(
+            self.get_parameter("scan_odom_stale_log_period").value
+        )
         self.imu_timeout = float(self.get_parameter("imu_timeout").value)
         self.imu_error_log_period = float(self.get_parameter("imu_error_log_period").value)
         self.enable_angle_debug = bool(self.get_parameter("enable_angle_debug").value)
@@ -121,6 +137,8 @@ class CarOdometry(Node):
         self.create_subscription(Float32MultiArray, wheel_speed_topic, self.wheel_speed_callback, 10)
         self.create_subscription(JointState, joint_state_topic, self.joint_state_callback, 10)
         self.create_subscription(Imu, imu_topic, self.imu_callback, 10)
+        if self.use_scan_odometry:
+            self.create_subscription(Odometry, scan_odom_topic, self.scan_odom_callback, 10)
 
         self.x = 0.0
         self.y = 0.0
@@ -128,6 +146,8 @@ class CarOdometry(Node):
         self.linear_x = 0.0
         self.angular_z = 0.0
         self.latest_wheel_speed: Optional[List[float]] = None
+        self.latest_wheel_speed_receive_time: Optional[float] = None
+        self.last_wheel_speed_error_log_time = 0.0
         self.latest_imu: Optional[Imu] = None
         self.latest_imu_receive_time: Optional[float] = None
         self.last_imu_error_log_time = 0.0
@@ -140,6 +160,9 @@ class CarOdometry(Node):
         self.previous_imu_yaw: Optional[float] = None
         self.previous_imu_stamp_sec: Optional[float] = None
         self.imu_orientation_angular_z = 0.0
+        self.latest_scan_odom: Optional[Odometry] = None
+        self.latest_scan_odom_receive_time: Optional[float] = None
+        self.last_scan_odom_stale_log_time = 0.0
 
         period = 1.0 / publish_rate if publish_rate > 0.0 else 0.02
         self.timer = self.create_timer(period, self.update_odometry)
@@ -154,6 +177,7 @@ class CarOdometry(Node):
             self.get_logger().warn("received /wheel_speeds with fewer than 4 elements")
             return
         self.latest_wheel_speed = [float(value) for value in msg.data[:4]]
+        self.latest_wheel_speed_receive_time = time.monotonic()
 
     def joint_state_callback(self, msg: JointState) -> None:
         if self.latest_wheel_speed is not None:
@@ -161,10 +185,16 @@ class CarOdometry(Node):
         if len(msg.velocity) < 4 or self.wheel_radius <= 0.0:
             return
         self.latest_wheel_speed = [float(value) * self.wheel_radius for value in msg.velocity[:4]]
+        self.latest_wheel_speed_receive_time = time.monotonic()
 
     def imu_callback(self, msg: Imu) -> None:
         self.latest_imu = msg
         self.latest_imu_receive_time = time.monotonic()
+
+    def scan_odom_callback(self, msg: Odometry) -> None:
+        """Accept verified laser odometry without publishing a second TF tree."""
+        self.latest_scan_odom = msg
+        self.latest_scan_odom_receive_time = time.monotonic()
 
     def _stamp_to_sec(self, msg: Imu) -> float:
         return float(msg.header.stamp.sec) + float(msg.header.stamp.nanosec) / 1e9
@@ -185,6 +215,15 @@ class CarOdometry(Node):
             return
         self.last_update_time = now
 
+        if self._has_fresh_scan_odom():
+            self._adopt_scan_odometry(self.latest_scan_odom)
+            if self.enable_angle_debug:
+                self.publish_debug_angle(now)
+            self.publish_odometry(now)
+            return
+        if self.use_scan_odometry:
+            self._log_scan_odom_stale()
+
         if not self._has_fresh_imu():
             self._log_imu_error()
             return
@@ -194,10 +233,12 @@ class CarOdometry(Node):
         previous_accumulated_yaw = self.accumulated_yaw
         delta_theta = 0.0
 
-        if self.latest_wheel_speed is not None:
+        if self._has_fresh_wheel_speed():
             linear_x, angular_from_wheels = self.extract_base_linear_and_angular(self.latest_wheel_speed)
             if self.use_wheel_angular_fallback:
                 angular_z = angular_from_wheels
+        else:
+            self._log_wheel_speed_error()
 
         if self.use_imu_orientation:
             yaw = quaternion_to_yaw(self.latest_imu.orientation)
@@ -247,12 +288,49 @@ class CarOdometry(Node):
             return True
         return time.monotonic() - self.latest_imu_receive_time <= self.imu_timeout
 
+    def _has_fresh_wheel_speed(self) -> bool:
+        if self.latest_wheel_speed is None or self.latest_wheel_speed_receive_time is None:
+            return False
+        if self.wheel_speed_timeout <= 0.0:
+            return True
+        return time.monotonic() - self.latest_wheel_speed_receive_time <= self.wheel_speed_timeout
+
+    def _has_fresh_scan_odom(self) -> bool:
+        if not self.use_scan_odometry:
+            return False
+        if self.latest_scan_odom is None or self.latest_scan_odom_receive_time is None:
+            return False
+        return time.monotonic() - self.latest_scan_odom_receive_time <= self.scan_odom_timeout
+
+    def _adopt_scan_odometry(self, scan_odom: Odometry) -> None:
+        self.x = float(scan_odom.pose.pose.position.x)
+        self.y = float(scan_odom.pose.pose.position.y)
+        self.theta = quaternion_to_yaw(scan_odom.pose.pose.orientation)
+        self.accumulated_yaw = self.theta
+        self.linear_x = float(scan_odom.twist.twist.linear.x)
+        self.angular_z = float(scan_odom.twist.twist.angular.z)
+        self.latest_imu_yaw_deg = math.degrees(self.theta)
+
+    def _log_scan_odom_stale(self) -> None:
+        now = time.monotonic()
+        if now - self.last_scan_odom_stale_log_time < self.scan_odom_stale_log_period:
+            return
+        self.last_scan_odom_stale_log_time = now
+        self.get_logger().warn("激光里程计暂不可用，回退至轮速/IMU 里程计")
+
     def _log_imu_error(self) -> None:
         now = time.monotonic()
         if now - self.last_imu_error_log_time < self.imu_error_log_period:
             return
         self.last_imu_error_log_time = now
         self.get_logger().error("IMU 无反馈或已超时，跳过本次里程计更新")
+
+    def _log_wheel_speed_error(self) -> None:
+        now = time.monotonic()
+        if now - self.last_wheel_speed_error_log_time < self.wheel_speed_error_log_period:
+            return
+        self.last_wheel_speed_error_log_time = now
+        self.get_logger().error("轮速无反馈或已超时，里程计线速度已归零")
 
     def publish_debug_angle(self, stamp) -> None:
         odom_yaw_deg = math.degrees(self.accumulated_yaw)

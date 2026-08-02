@@ -172,7 +172,7 @@ maps/my_map.pgm
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `map` | `maps/aoxiao_lab.yaml` | 静态地图路径，优先使用工作空间根目录 `maps/aoxiao_lab.yaml`。 |
+| `map` | `maps/sri_1816.yaml` | 静态地图路径，默认使用工作空间根目录的 `maps/sri_1816.yaml`。 |
 | `nav2_params_file` | `config/nav2_params.yaml` | Nav2 参数文件。 |
 | `car_params_file` | `car_ctrl/config/ddsm_hat_diff_drive.yaml` | 底盘、IMU、里程计参数。 |
 | `lidar_params_file` | `lslidar_driver/params/lsx10.yaml` | 雷达参数。 |

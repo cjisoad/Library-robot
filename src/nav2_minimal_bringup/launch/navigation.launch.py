@@ -13,10 +13,12 @@ from pathlib import Path
 
 
 NAV2_CONTAINER_NAME = "nav2_container"
+MAP_YAML_PLACEHOLDER = "__NAVIGATION_MAP_YAML__"
 
 
 def _default_map_yaml(pkg_share: str) -> str:
-    return str(Path(pkg_share) / "maps" / "302lab.yaml")
+    workspace_root = Path(pkg_share).parents[3]
+    return str(workspace_root / "maps" / "sri_1816.yaml")
 
 
 def generate_launch_description():
@@ -42,7 +44,7 @@ def generate_launch_description():
         source_file=params_file,
         replacements={
             "/home/boreas/robot_nav/src/nav2_minimal_bringup/behavior_trees": behavior_tree_dir,
-            "/home/boreas/robot_nav/src/maps/my_map.yaml": map_yaml,
+            MAP_YAML_PLACEHOLDER: map_yaml,
         },
     )
     configured_params = ParameterFile(

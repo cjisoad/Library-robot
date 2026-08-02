@@ -41,6 +41,7 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration("use_rviz")
     rviz_config = LaunchConfiguration("rviz_config")
 
+    # Keep mapping laser frames aligned with the production navigation stack.
     front_laser_tf = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
@@ -48,9 +49,9 @@ def generate_launch_description():
         output="screen",
         arguments=[
             "--x",
-            "0.26",
+            "0.215",
             "--y",
-            "0.0",
+            "0.282",
             "--z",
             "0.0",
             "--roll",
@@ -58,7 +59,7 @@ def generate_launch_description():
             "--pitch",
             "0.0",
             "--yaw",
-            "-0.78539816339",
+            "0.78539816339",
             "--frame-id",
             "base_link",
             "--child-frame-id",
@@ -73,17 +74,17 @@ def generate_launch_description():
         output="screen",
         arguments=[
             "--x",
-            "-0.26",
+            "-0.215",
             "--y",
-            "0.0",
+            "-0.282",
             "--z",
             "0.0",
             "--roll",
             "0.0",
             "--pitch",
-            "-3.14",
+            "0.0",
             "--yaw",
-            "0.78539816339",
+            "-2.3561944901",
             "--frame-id",
             "base_link",
             "--child-frame-id",
@@ -220,6 +221,9 @@ def generate_launch_description():
                         "allowed_radius": 0.45,
                         "enable_shadow_filter": True,
                         "enable_average_filter": False,
+                        "enable_single_laser_fallback": True,
+                        "single_laser_timeout": 0.6,
+                        "scan_status_topic": "/localization/scan_mode",
                     }
                 ],
             ),

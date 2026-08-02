@@ -35,6 +35,9 @@ MergerNode::MergerNode(const rclcpp::NodeOptions & options)
   merged_cloud_pub =
     this->create_publisher<sensor_msgs::msg::PointCloud2>(this->get_parameter(
       "merged_cloud_topic").as_string(), rclcpp::SensorDataQoS());
+  scan_status_pub = this->create_publisher<std_msgs::msg::String>(
+    scan_status_topic_param,
+    rclcpp::QoS(1).transient_local().reliable());
   laser_1_sub.subscribe(this, this->get_parameter("laser_1_topic").as_string(),
       rclcpp::SensorDataQoS().get_rmw_qos_profile());
   laser_2_sub.subscribe(this, this->get_parameter("laser_2_topic").as_string(),
@@ -51,7 +54,18 @@ MergerNode::MergerNode(const rclcpp::NodeOptions & options)
   message_filter->setAgePenalty(tolerance_param);
   message_filter->registerCallback(
     std::bind(&MergerNode::sub_callback, this, std::placeholders::_1, std::placeholders::_2));
+  auto laser_monitor_qos = rclcpp::SensorDataQoS();
+  laser_monitor_qos.reliable();
+  laser_1_monitor_sub = this->create_subscription<sensor_msgs::msg::LaserScan>(
+    this->get_parameter("laser_1_topic").as_string(), laser_monitor_qos,
+    std::bind(&MergerNode::laser_1_monitor_callback, this, std::placeholders::_1));
+  laser_2_monitor_sub = this->create_subscription<sensor_msgs::msg::LaserScan>(
+    this->get_parameter("laser_2_topic").as_string(), laser_monitor_qos,
+    std::bind(&MergerNode::laser_2_monitor_callback, this, std::placeholders::_1));
+  single_laser_fallback_timer = this->create_wall_timer(
+    100ms, std::bind(&MergerNode::single_laser_fallback_callback, this));
   tf2_broadcaster = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
+  publish_scan_status("unavailable");
 }
 
 void MergerNode::declare_param()
@@ -84,6 +98,12 @@ void MergerNode::declare_param()
   allowed_radius_param = this->declare_parameter("allowed_radius", 1.0);
   enable_shadow_filter_param = this->declare_parameter("enable_shadow_filter", false);
   enable_average_filter_param = this->declare_parameter("enable_average_filter", false);
+  enable_single_laser_fallback_param = this->declare_parameter("enable_single_laser_fallback", false);
+  single_laser_timeout_param = this->declare_parameter("single_laser_timeout", 0.6);
+  scan_status_topic_param = this->declare_parameter("scan_status_topic", "/localization/scan_mode");
+  if (single_laser_timeout_param <= 0.0) {
+    throw std::runtime_error("single_laser_timeout must be greater than zero");
+  }
 }
 
 void MergerNode::refresh_param()
@@ -153,6 +173,7 @@ void MergerNode::sub_callback(
   const sensor_msgs::msg::LaserScan::ConstSharedPtr & lidar_1_msg,
   const sensor_msgs::msg::LaserScan::ConstSharedPtr & lidar_2_msg)
 {
+  last_dual_scan_at = std::chrono::steady_clock::now();
   if (target_frame_param.empty()) {
     rclcpp::shutdown();
   } else {
@@ -161,10 +182,12 @@ void MergerNode::sub_callback(
       refresh_param();
     }
 
-    if(enable_average_filter_param) {
+    if(enable_average_filter_param && lidar_1_msg->ranges.size() >= 3 &&
+      lidar_2_msg->ranges.size() >= 3)
+    {
       lidar_1_avg = *lidar_1_msg;
       lidar_2_avg = *lidar_2_msg;
-      for(size_t i = 0; i <= lidar_1_msg->ranges.size(); i++) {
+      for(size_t i = 0; i < lidar_1_msg->ranges.size(); i++) {
         if(i == 0) {
           lidar_1_avg.ranges[i] = (lidar_1_msg->ranges[lidar_1_msg->ranges.size() - 1] +
             lidar_1_msg->ranges[i] + lidar_1_msg->ranges[i + 1]) / 3;
@@ -176,7 +199,7 @@ void MergerNode::sub_callback(
             lidar_1_msg->ranges[i + 1]) / 3;
         }
       }
-      for(size_t i = 0; i <= lidar_2_msg->ranges.size(); i++) {
+      for(size_t i = 0; i < lidar_2_msg->ranges.size(); i++) {
         if(i == 0) {
           lidar_2_avg.ranges[i] = (lidar_2_msg->ranges[lidar_2_msg->ranges.size() - 1] +
             lidar_2_msg->ranges[i] + lidar_2_msg->ranges[i + 1]) / 3;
@@ -218,78 +241,167 @@ void MergerNode::sub_callback(
     pcl_cloud_out = pcl_cloud_in_1;
     pcl_cloud_out += pcl_cloud_in_2;
 
-    if(enable_shadow_filter_param) {
-      allowed_radius_scaled = allowed_radius_param / range_max_param;
-      kdtree.setInputCloud(pcl_cloud_out.makeShared());
+    publish_merged_output();
+    publish_scan_status("dual");
+  }
+}
 
-      for (auto & point : pcl_cloud_out.points) {
-        dist_from_origin = std::sqrt(std::pow(point.x, 2) + std::pow(point.y, 2));
-        numNearbyPoints = kdtree.radiusSearch(point, allowed_radius_scaled * dist_from_origin,
-            pointIndices, pointDistances);
-        numNearbyPoints -= 1;
-        if(numNearbyPoints == 0) {
-          if(use_inf_param) {
-            point.x = std::numeric_limits<double>::infinity();
-            point.y = std::numeric_limits<double>::infinity();
-          } else {
-            point.x = range_max_param + inf_epsilon_param;
-            point.y = range_max_param + inf_epsilon_param;
-          }
+void MergerNode::laser_1_monitor_callback(
+  const sensor_msgs::msg::LaserScan::ConstSharedPtr & message)
+{
+  latest_laser_1 = message;
+  laser_1_received_at = std::chrono::steady_clock::now();
+}
+
+void MergerNode::laser_2_monitor_callback(
+  const sensor_msgs::msg::LaserScan::ConstSharedPtr & message)
+{
+  latest_laser_2 = message;
+  laser_2_received_at = std::chrono::steady_clock::now();
+}
+
+void MergerNode::single_laser_fallback_callback()
+{
+  if (!enable_single_laser_fallback_param) {
+    return;
+  }
+  const auto now = std::chrono::steady_clock::now();
+  const auto timeout = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+    std::chrono::duration<double>(single_laser_timeout_param));
+  const bool dual_is_fresh = last_dual_scan_at.time_since_epoch().count() != 0 &&
+    now - last_dual_scan_at <= timeout;
+  if (dual_is_fresh) {
+    return;
+  }
+  const bool laser_1_is_fresh = latest_laser_1 && laser_1_received_at.time_since_epoch().count() != 0 &&
+    now - laser_1_received_at <= timeout;
+  const bool laser_2_is_fresh = latest_laser_2 && laser_2_received_at.time_since_epoch().count() != 0 &&
+    now - laser_2_received_at <= timeout;
+
+  // A fallback is only safe when exactly one input is current. If both inputs
+  // are present but cannot synchronize, keep the last good scan rather than
+  // combining measurements with unknown time skew.
+  if (laser_1_is_fresh && !laser_2_is_fresh) {
+    if (last_fallback_laser_1_at != laser_1_received_at && publish_single_laser_scan(
+        latest_laser_1, "Laser 1", laser_1_x_offset, laser_1_y_offset, laser_1_yaw_offset))
+    {
+      last_fallback_laser_1_at = laser_1_received_at;
+      publish_scan_status("single_laser_1");
+    }
+    return;
+  }
+  if (laser_2_is_fresh && !laser_1_is_fresh) {
+    if (last_fallback_laser_2_at != laser_2_received_at && publish_single_laser_scan(
+        latest_laser_2, "Laser 2", laser_2_x_offset, laser_2_y_offset, laser_2_yaw_offset))
+    {
+      last_fallback_laser_2_at = laser_2_received_at;
+      publish_scan_status("single_laser_2");
+    }
+    return;
+  }
+  if (!laser_1_is_fresh && !laser_2_is_fresh) {
+    publish_scan_status("unavailable");
+  }
+}
+
+bool MergerNode::publish_single_laser_scan(
+  const sensor_msgs::msg::LaserScan::ConstSharedPtr & scan,
+  const std::string & laser_name,
+  double x_offset,
+  double y_offset,
+  double yaw_offset)
+{
+  projector.projectLaser(*scan, cloud_in_1);
+  if (!transform_cloud_to_target(cloud_in_1, laser_name, x_offset, y_offset, yaw_offset)) {
+    return false;
+  }
+  pcl::fromROSMsg(cloud_in_1, pcl_cloud_out);
+  if (pcl_cloud_out.points.empty()) {
+    return false;
+  }
+  publish_merged_output();
+  return true;
+}
+
+void MergerNode::publish_merged_output()
+{
+  if(enable_shadow_filter_param) {
+    allowed_radius_scaled = allowed_radius_param / range_max_param;
+    kdtree.setInputCloud(pcl_cloud_out.makeShared());
+
+    for (auto & point : pcl_cloud_out.points) {
+      dist_from_origin = std::sqrt(std::pow(point.x, 2) + std::pow(point.y, 2));
+      numNearbyPoints = kdtree.radiusSearch(point, allowed_radius_scaled * dist_from_origin,
+          pointIndices, pointDistances);
+      numNearbyPoints -= 1;
+      if(numNearbyPoints == 0) {
+        if(use_inf_param) {
+          point.x = std::numeric_limits<double>::infinity();
+          point.y = std::numeric_limits<double>::infinity();
+        } else {
+          point.x = range_max_param + inf_epsilon_param;
+          point.y = range_max_param + inf_epsilon_param;
         }
       }
     }
-
-    pcl::toROSMsg(pcl_cloud_out, cloud_out);
-    merged_cloud_pub->publish(cloud_out);
-
-    merged.header = cloud_out.header;
-    merged.header.frame_id = target_frame_param;
-
-    merged.angle_min = angle_min_param;
-    merged.angle_max = angle_max_param;
-    merged.angle_increment = angle_increment_param;
-    merged.time_increment = 0.0;
-    merged.scan_time = scan_time_param;
-    merged.range_min = range_min_param;
-    merged.range_max = range_max_param;
-
-    ranges_size = std::ceil((merged.angle_max - merged.angle_min) / merged.angle_increment);
-
-    if (use_inf_param) {
-      merged.ranges.assign(ranges_size, std::numeric_limits<double>::infinity());
-    } else {
-      merged.ranges.assign(ranges_size, merged.range_max + inf_epsilon_param);
-    }
-
-    for (sensor_msgs::PointCloud2ConstIterator<float> iter_x(cloud_out, "x"),
-      iter_y(cloud_out, "y"), iter_z(cloud_out, "z");
-      iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z)
-    {
-      if (
-        std::isnan(*iter_x) || std::isnan(*iter_y) || std::isnan(*iter_z) ||
-        *iter_z > max_height_param || *iter_z < min_height_param)
-      {
-        continue;
-      }
-
-      range = hypot(*iter_x, *iter_y);
-      if (range < merged.range_min || range > merged.range_max) {
-        continue;
-      }
-
-      angle = atan2(*iter_y, *iter_x);
-      if (angle < merged.angle_min || angle > merged.angle_max) {
-        continue;
-      }
-
-      index = (angle - merged.angle_min) / merged.angle_increment;
-      if (range < merged.ranges[index]) {
-        merged.ranges[index] = range;
-      }
-    }
-
-    merged_scan_pub->publish(merged);
   }
+
+  pcl::toROSMsg(pcl_cloud_out, cloud_out);
+  merged_cloud_pub->publish(cloud_out);
+
+  merged.header = cloud_out.header;
+  merged.header.frame_id = target_frame_param;
+  merged.angle_min = angle_min_param;
+  merged.angle_max = angle_max_param;
+  merged.angle_increment = angle_increment_param;
+  merged.time_increment = 0.0;
+  merged.scan_time = scan_time_param;
+  merged.range_min = range_min_param;
+  merged.range_max = range_max_param;
+  ranges_size = std::ceil((merged.angle_max - merged.angle_min) / merged.angle_increment);
+
+  if (use_inf_param) {
+    merged.ranges.assign(ranges_size, std::numeric_limits<double>::infinity());
+  } else {
+    merged.ranges.assign(ranges_size, merged.range_max + inf_epsilon_param);
+  }
+
+  for (sensor_msgs::PointCloud2ConstIterator<float> iter_x(cloud_out, "x"),
+    iter_y(cloud_out, "y"), iter_z(cloud_out, "z");
+    iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z)
+  {
+    if (
+      std::isnan(*iter_x) || std::isnan(*iter_y) || std::isnan(*iter_z) ||
+      *iter_z > max_height_param || *iter_z < min_height_param)
+    {
+      continue;
+    }
+    range = hypot(*iter_x, *iter_y);
+    if (range < merged.range_min || range > merged.range_max) {
+      continue;
+    }
+    angle = atan2(*iter_y, *iter_x);
+    if (angle < merged.angle_min || angle > merged.angle_max) {
+      continue;
+    }
+    index = (angle - merged.angle_min) / merged.angle_increment;
+    if (range < merged.ranges[index]) {
+      merged.ranges[index] = range;
+    }
+  }
+  merged_scan_pub->publish(merged);
+}
+
+void MergerNode::publish_scan_status(const std::string & status)
+{
+  if (scan_status == status) {
+    return;
+  }
+  scan_status = status;
+  std_msgs::msg::String message;
+  message.data = status;
+  scan_status_pub->publish(message);
+  RCLCPP_WARN(this->get_logger(), "laser localization mode: %s", status.c_str());
 }
 
 }  // namespace merger_node

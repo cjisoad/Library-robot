@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,7 @@
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
+#include "std_msgs/msg/string.hpp"
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
@@ -58,9 +60,22 @@ private:
   message_filter;
   message_filters::Subscriber<sensor_msgs::msg::LaserScan> laser_1_sub;
   message_filters::Subscriber<sensor_msgs::msg::LaserScan> laser_2_sub;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laser_1_monitor_sub;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laser_2_monitor_sub;
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr merged_scan_pub;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr merged_cloud_pub;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr scan_status_pub;
+  rclcpp::TimerBase::SharedPtr single_laser_fallback_timer;
   laser_geometry::LaserProjection projector;
+
+  sensor_msgs::msg::LaserScan::ConstSharedPtr latest_laser_1;
+  sensor_msgs::msg::LaserScan::ConstSharedPtr latest_laser_2;
+  std::chrono::steady_clock::time_point laser_1_received_at{};
+  std::chrono::steady_clock::time_point laser_2_received_at{};
+  std::chrono::steady_clock::time_point last_dual_scan_at{};
+  std::chrono::steady_clock::time_point last_fallback_laser_1_at{};
+  std::chrono::steady_clock::time_point last_fallback_laser_2_at{};
+  std::string scan_status;
 
   sensor_msgs::msg::LaserScan lidar_1_avg;
   sensor_msgs::msg::LaserScan lidar_2_avg;
@@ -81,7 +96,9 @@ private:
     laser_1_x_offset, laser_1_y_offset, laser_1_yaw_offset, laser_2_x_offset, laser_2_y_offset,
     laser_2_yaw_offset, allowed_radius_param;
   bool use_inf_param, enable_calibration_param, enable_shadow_filter_param,
-    enable_average_filter_param;
+    enable_average_filter_param, enable_single_laser_fallback_param;
+  std::string scan_status_topic_param;
+  double single_laser_timeout_param;
   uint32_t ranges_size;
   double range, angle;
   int index, numNearbyPoints;
@@ -94,6 +111,17 @@ private:
   void sub_callback(
     const sensor_msgs::msg::LaserScan::ConstSharedPtr & lidar_1_msg,
     const sensor_msgs::msg::LaserScan::ConstSharedPtr & lidar_2_msg);
+  void laser_1_monitor_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr & message);
+  void laser_2_monitor_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr & message);
+  void single_laser_fallback_callback();
+  bool publish_single_laser_scan(
+    const sensor_msgs::msg::LaserScan::ConstSharedPtr & scan,
+    const std::string & laser_name,
+    double x_offset,
+    double y_offset,
+    double yaw_offset);
+  void publish_merged_output();
+  void publish_scan_status(const std::string & status);
   bool transform_cloud_to_target(
     sensor_msgs::msg::PointCloud2 & cloud,
     const std::string & laser_name,

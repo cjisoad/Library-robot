@@ -25,6 +25,8 @@ setup(
         "console_scripts": [
             "init_pose_node = robot_decision.init_pose_node:main",
             "cruise_node = robot_decision.cruise_node:main",
+            "edge_gateway_node = robot_decision.edge_gateway_node:main",
+            "auto_localization_node = robot_decision.auto_localization_node:main",
             "point3_fine_tune_node = robot_decision.point3_fine_tune_node:main",
             "book_center_detector_node = robot_decision.book_center_detector_node:main",
         ],

@@ -2,6 +2,7 @@
 """WIT IMU 串口驱动，发布里程计使用的 /imu/data_raw。"""
 
 import math
+import time
 from typing import Dict, List, Optional
 
 import rclpy
@@ -53,15 +54,23 @@ class WitImuDriver(Node):
         self.declare_parameter("imu_topic", "/imu/data_raw")
         self.declare_parameter("imu_frame", "imu_link")
         self.declare_parameter("read_period", 0.005)
+        self.declare_parameter("reconnect_period", 1.0)
+        self.declare_parameter("no_data_timeout", 2.0)
 
         self.imu_port = self.get_parameter("imu_port").value
         self.imu_baud_rate = int(self.get_parameter("imu_baud_rate").value)
         self.imu_topic = self.get_parameter("imu_topic").value
         self.imu_frame = self.get_parameter("imu_frame").value
         read_period = float(self.get_parameter("read_period").value)
+        self.reconnect_period = float(self.get_parameter("reconnect_period").value)
+        self.no_data_timeout = float(self.get_parameter("no_data_timeout").value)
 
         if read_period <= 0.0:
             raise RuntimeError("read_period must be positive")
+        if self.reconnect_period <= 0.0:
+            raise RuntimeError("reconnect_period must be positive")
+        if self.no_data_timeout <= 0.0:
+            raise RuntimeError("no_data_timeout must be positive")
 
         self.imu_pub = self.create_publisher(Imu, self.imu_topic, 10)
 
@@ -72,14 +81,21 @@ class WitImuDriver(Node):
             "gyro": [0.0, 0.0, 0.0],
             "angle": [0.0, 0.0, 0.0],
         }
+        self.last_connect_attempt = float("-inf")
+        self.last_data_receive_time: Optional[float] = None
 
-        self.open_serial()
+        self.open_serial(force=True)
         self.timer = self.create_timer(read_period, self.read_serial_data)
 
-    def open_serial(self) -> None:
+    def open_serial(self, force: bool = False) -> None:
         if serial is None:
             self.get_logger().error("未安装 python3-serial，无法打开 IMU 串口")
             return
+
+        now = time.monotonic()
+        if not force and now - self.last_connect_attempt < self.reconnect_period:
+            return
+        self.last_connect_attempt = now
 
         try:
             self.serial_conn = serial.Serial(
@@ -87,24 +103,37 @@ class WitImuDriver(Node):
                 baudrate=self.imu_baud_rate,
                 timeout=0.05,
             )
+            self.frame_buffer.clear()
+            self.last_data_receive_time = now
             self.get_logger().info(f"已连接 IMU 串口 {self.imu_port}")
-        except serial.SerialException as exc:
+        except (serial.SerialException, OSError) as exc:
             self.serial_conn = None
             self.get_logger().error(f"IMU 串口打开失败: {exc}")
 
     def read_serial_data(self) -> None:
         if self.serial_conn is None or not self.serial_conn.is_open:
+            self.open_serial()
             return
 
         try:
             chunk = self.serial_conn.read(self.serial_conn.in_waiting or 1)
-        except serial.SerialException as exc:
+        except (serial.SerialException, OSError) as exc:
             self.get_logger().error(f"IMU 串口读取失败: {exc}")
+            self.close_serial()
             return
 
         if not chunk:
+            if (
+                self.last_data_receive_time is not None
+                and time.monotonic() - self.last_data_receive_time >= self.no_data_timeout
+            ):
+                self.get_logger().warning(
+                    f"IMU 串口连续 {self.no_data_timeout:.1f} 秒无数据，准备重连"
+                )
+                self.close_serial()
             return
 
+        self.last_data_receive_time = time.monotonic()
         self.frame_buffer.extend(chunk)
         self._parse_buffer()
 
@@ -186,11 +215,14 @@ class WitImuDriver(Node):
         self.imu_pub.publish(msg)
 
     def close_serial(self) -> None:
-        if self.serial_conn is not None and self.serial_conn.is_open:
+        if self.serial_conn is not None:
             try:
-                self.serial_conn.close()
-            except serial.SerialException:
+                if self.serial_conn.is_open:
+                    self.serial_conn.close()
+            except (serial.SerialException, OSError):
                 pass
+        self.serial_conn = None
+        self.last_data_receive_time = None
 
 
 def main(args=None) -> None:

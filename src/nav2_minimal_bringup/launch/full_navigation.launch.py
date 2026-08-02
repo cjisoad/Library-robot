@@ -11,7 +11,8 @@ from pathlib import Path
 
 
 def _default_map_yaml(pkg_share: str) -> str:
-    return str(Path(pkg_share) / "maps" / "302lab.yaml")
+    workspace_root = Path(pkg_share).parents[3]
+    return str(workspace_root / "maps" / "sri_1816.yaml")
 
 
 def _package_file(package_name: str, *relative_path: str) -> str:
@@ -49,6 +50,7 @@ def generate_launch_description():
     use_respawn = LaunchConfiguration("use_respawn")
     use_nav_rviz = LaunchConfiguration("use_nav_rviz")
     use_lidar_rviz = LaunchConfiguration("use_lidar_rviz")
+    start_imu_driver = LaunchConfiguration("start_imu_driver")
     nav_rviz_config = LaunchConfiguration("nav_rviz_config")
     lidar_rviz_config = LaunchConfiguration("lidar_rviz_config")
     log_level = LaunchConfiguration("log_level")
@@ -91,9 +93,9 @@ def generate_launch_description():
         output="screen",
         arguments=[
             "--x",
-            "0.26",
+            "0.215",
             "--y",
-            "0.0",
+            "0.282",
             "--z",
             "0.0",
             "--roll",
@@ -101,7 +103,7 @@ def generate_launch_description():
             "--pitch",
             "0.0",
             "--yaw",
-            "-0.78539816339",
+            "0.78539816339",
             "--frame-id",
             "base_link",
             "--child-frame-id",
@@ -116,17 +118,17 @@ def generate_launch_description():
         output="screen",
         arguments=[
             "--x",
-            "-0.26",
+            "-0.215",
             "--y",
-            "0.0",
+            "-0.282",
             "--z",
             "0.0",
             "--roll",
             "0.0",
             "--pitch",
-            "-3.14",
+            "0.0",
             "--yaw",
-            "0.78539816339",
+            "-2.3561944901",
             "--frame-id",
             "base_link",
             "--child-frame-id",
@@ -207,6 +209,11 @@ def generate_launch_description():
                 description="Start the lidar vendor RViz with the integrated bringup.",
             ),
             DeclareLaunchArgument(
+                "start_imu_driver",
+                default_value="true",
+                description="Start the IMU driver with navigation. Disable when an external supervisor owns it.",
+            ),
+            DeclareLaunchArgument(
                 "nav_rviz_config",
                 default_value=os.path.join(
                     get_package_share_directory("nav2_bringup"),
@@ -226,7 +233,14 @@ def generate_launch_description():
                 description="Logging level for Nav2 nodes.",
             ),
             _car_node("ddsm_hat_diff_drive_node", car_params_file),
-            _car_node("imu_driver", car_params_file),
+            Node(
+                package="car_ctrl",
+                executable="imu_driver",
+                output="screen",
+                emulate_tty=True,
+                parameters=[car_params_file],
+                condition=IfCondition(start_imu_driver),
+            ),
             _car_node("car_odometry", car_params_file),
             laser_static_tf,
             back_laser_static_tf,
@@ -280,9 +294,13 @@ def generate_launch_description():
                         "allowed_radius": 0.45,
                         "enable_shadow_filter": True,
                         "enable_average_filter": False,
+                        "enable_single_laser_fallback": True,
+                        "single_laser_timeout": 0.6,
+                        "scan_status_topic": "/localization/scan_mode",
                     }
                 ],
             ),
+            _car_node("scan_odometry", car_params_file),
             lidar_rviz,
             navigation_launch,
         ]

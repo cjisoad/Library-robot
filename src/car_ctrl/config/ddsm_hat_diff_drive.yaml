@@ -46,6 +46,8 @@ ddsm_hat_diff_drive:
     rs485_mode_command_uses_crc: false
     rs485_log_raw_tx: false
     rs485_log_raw_rx: false
+    serial_reconnect_period: 1.0
+    feedback_health_timeout: 2.0
 
 imu_driver:
   ros__parameters:
@@ -54,12 +56,15 @@ imu_driver:
     imu_topic: /imu/data_raw
     imu_frame: imu_link
     read_period: 0.005
+    reconnect_period: 1.0
+    no_data_timeout: 2.0
 
 car_odometry:
   ros__parameters:
     wheel_speed_topic: /wheel_speeds
     joint_state_topic: /wheel_joint_states
     imu_topic: /imu/data_raw
+    scan_odom_topic: /scan_odom
     odom_topic: /odom
     odom_frame: odom
     base_frame: base_link
@@ -76,6 +81,12 @@ car_odometry:
     linear_scale: 1.0
     angular_scale: 1.0
     publish_rate: 50.0
+    wheel_speed_timeout: 1.2
+    wheel_speed_error_log_period: 30.0
+    # Publish /odom from wheel speed and IMU; do not let scan ICP overwrite it.
+    use_scan_odometry: false
+    scan_odom_timeout: 0.5
+    scan_odom_stale_log_period: 30.0
     imu_timeout: 0.5
     imu_error_log_period: 1.0
     enable_angle_debug: false
@@ -87,3 +98,28 @@ car_odometry:
     debug_x_topic: /debug/odom_x_m
     debug_y_topic: /debug/odom_y_m
     debug_distance_topic: /debug/odom_distance_m
+
+scan_odometry:
+  ros__parameters:
+    scan_topic: /scan
+    imu_topic: /imu/data_raw
+    odom_topic: /scan_odom
+    odom_frame: scan_odom
+    base_frame: base_link
+    min_range: 0.20
+    max_range: 12.0
+    point_stride: 4
+    imu_timeout: 0.5
+    # These bounds apply between 10 Hz scans, so invalid/ambiguous data is
+    # rejected rather than allowed to create a map-position jump.
+    max_yaw_per_scan: 0.25
+    max_translation_per_scan: 0.20
+    max_correspondence_distance: 0.18
+    min_correspondences: 25
+    max_residual_rms: 0.06
+    icp_iterations: 6
+    # Stationary scans fluctuate by a few millimetres.  Do not integrate that
+    # noise, but continue publishing a healthy zero-motion laser odometry.
+    translation_deadband: 0.006
+    yaw_deadband: 0.01
+    reject_log_period: 2.0
